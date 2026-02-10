@@ -66,7 +66,7 @@ func (s *MemStorage) Get(ctx context.Context, ID string) (*model.ShortURL, error
 	return &urlCopy, nil
 }
 
-func (s *MemStorage) GetByOriginal(ctx context.Context, originalUrl string) (*model.ShortURL, error) {
+func (s *MemStorage) GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -74,12 +74,27 @@ func (s *MemStorage) GetByOriginal(ctx context.Context, originalUrl string) (*mo
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	shortID, exists := s.index[originalUrl]
+	shortID, exists := s.index[originalURL]
 	if !exists {
 		return nil, ErrNotFound
 	}
 
 	return s.Get(ctx, shortID)
+}
+
+func (s *MemStorage) Ping(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.urls == nil || s.index == nil {
+		return errors.New("storage not initialized")
+	}
+
+	return nil
 }
 
 func (s *MemStorage) Close() error {

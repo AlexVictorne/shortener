@@ -25,6 +25,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	if err := store.Ping(ctx); err != nil {
+		log.Fatalf("storage ping failed: %v", err)
+	}
+
 	idGenerator := generator.NewGenerator(8)
 
 	service := service.NewTrimmerService(store, idGenerator, cfg.BaseURL)

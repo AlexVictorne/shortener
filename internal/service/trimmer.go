@@ -129,7 +129,7 @@ func (s *TrimmerService) validateURL(rawURL string) error {
 
 	parsed, err := url.ParseRequestURI(rawURL)
 	if err != nil {
-		return fmt.Errorf("Invalid URL format: %w", err)
+		return fmt.Errorf("invalid URL format: %w", err)
 	}
 
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
@@ -164,7 +164,7 @@ func (s *TrimmerService) normalizeURL(rawURL string) (string, error) {
 func extractID(shortURL string) (string, error) {
 	parts := strings.Split(shortURL, "/")
 	if len(parts) == 0 {
-		return "", errors.New("Invalid short URL format")
+		return "", errors.New("invalid short URL format")
 	}
 
 	return parts[len(parts)-1], nil
