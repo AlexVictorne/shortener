@@ -44,7 +44,13 @@ func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 	// extract id
-	id := chi.URLParam(r, "id")
+	var id string
+	if chi.RouteContext(r.Context()) != nil {
+		id = chi.URLParam(r, "id")
+	} else {
+		id = r.URL.Path[1:]
+	}
+
 	if id == "" {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
@@ -68,9 +74,9 @@ func (h *Handler) MethodNotAllowedHandler(w http.ResponseWriter, r *http.Request
 	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 }
 
-func (h *Handler) SetupRoutes(mux *chi.Mux) {
+func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Post("/", h.ShortenURLHandler)
 	mux.Get("/{id}", h.RedirectHandler)
-	mux.MethodNotAllowed(h.MethodNotAllowedHandler)
 	mux.NotFound(h.NotFoundHandler)
+	mux.MethodNotAllowed(h.MethodNotAllowedHandler)
 }

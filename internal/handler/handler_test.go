@@ -8,6 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"shortener/internal/handler"
 	"shortener/internal/repository"
 	"shortener/internal/service"
@@ -37,13 +41,6 @@ func TestHandler_ShortenURLHandler(t *testing.T) {
 			wantInResponse: "http://localhost:8080/",
 		},
 		{
-			name:        "method not allowed",
-			method:      http.MethodGet,
-			contentType: "text/plain",
-			body:        "https://ya.ru",
-			wantStatus:  http.StatusMethodNotAllowed,
-		},
-		{
 			name:        "bad content type",
 			method:      http.MethodPost,
 			contentType: "application/json",
@@ -67,14 +64,13 @@ func TestHandler_ShortenURLHandler(t *testing.T) {
 			h.ShortenURLHandler(w, req)
 			res := w.Result()
 			defer res.Body.Close()
-			if res.StatusCode != tt.wantStatus {
-				t.Errorf("got status %d, want %d", res.StatusCode, tt.wantStatus)
-			}
+
+			assert.Equal(t, tt.wantStatus, res.StatusCode)
+
 			if tt.wantInResponse != "" {
 				b, _ := io.ReadAll(res.Body)
-				if !strings.Contains(string(b), tt.wantInResponse) {
-					t.Errorf("response body = %q, want substring %q", string(b), tt.wantInResponse)
-				}
+
+				assert.Contains(t, string(b), tt.wantInResponse)
 			}
 		})
 	}
@@ -105,12 +101,6 @@ func TestHandler_RedirectHandler(t *testing.T) {
 			wantLoc:    "https://ya.ru",
 		},
 		{
-			name:       "method not allowed",
-			method:     http.MethodPost,
-			path:       "/" + id,
-			wantStatus: http.StatusMethodNotAllowed,
-		},
-		{
 			name:       "bad id",
 			method:     http.MethodGet,
 			path:       "/",
@@ -131,14 +121,12 @@ func TestHandler_RedirectHandler(t *testing.T) {
 			h.RedirectHandler(w, req)
 			res := w.Result()
 			defer res.Body.Close()
-			if res.StatusCode != tt.wantStatus {
-				t.Errorf("got status %d, want %d", res.StatusCode, tt.wantStatus)
-			}
+
+			assert.Equal(t, tt.wantStatus, res.StatusCode)
+
 			if tt.wantLoc != "" {
 				loc := res.Header.Get("Location")
-				if loc != tt.wantLoc {
-					t.Errorf("Location header = %q, want %q", loc, tt.wantLoc)
-				}
+				assert.Equal(t, tt.wantLoc, loc)
 			}
 		})
 	}
@@ -154,5 +142,61 @@ func TestHandler_NotFoundHandler(t *testing.T) {
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusBadRequest {
 		t.Errorf("got status %d, want %d", res.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func testRequest(t *testing.T, ts *httptest.Server, method, path string, contentType string) (*http.Response, string) {
+	req, err := http.NewRequest(method, ts.URL+path, nil)
+	require.NoError(t, err)
+
+	req.Header.Set("Content-Type", contentType)
+
+	resp, err := ts.Client().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	return resp, string(respBody)
+}
+
+func TestHandler_Router(t *testing.T) {
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+	h := handler.NewHandler(svc)
+
+	r := chi.NewRouter()
+	h.SetupRoutes(r)
+
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	var tests = []struct {
+		name        string
+		url         string
+		contentType string
+		method      string
+		want        string
+		status      int
+	}{
+		{name: "empty GET", url: "/", method: http.MethodGet, want: "Method not allowed", status: http.StatusMethodNotAllowed},
+		{name: "not found GET", url: "/abc12345", method: http.MethodGet, want: "Not found", status: http.StatusNotFound},
+		{name: "other adress GET", url: "/yaopo/oi", method: http.MethodGet, want: "Bad request", status: http.StatusBadRequest},
+		{name: "unsupported type POST", url: "/", contentType: "application/json", method: http.MethodPost, want: "Unsupported content type", status: http.StatusBadRequest},
+		{name: "empty POST", url: "/", contentType: "text/plain", method: http.MethodPost, want: "Internal server error", status: http.StatusInternalServerError},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, body := testRequest(t, ts, tt.method, tt.url, tt.contentType)
+
+			assert.Equal(t, tt.status, resp.StatusCode)
+
+			if tt.want != "" {
+				assert.Contains(t, body, tt.want)
+			}
+		})
 	}
 }
