@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"shortener/internal/service"
 )
 
@@ -18,11 +20,6 @@ func NewHandler(service *service.TrimmerService) *Handler {
 }
 
 func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	if r.Header.Get("Content-Type") != "text/plain" {
 		http.Error(w, "Unsupported content type", http.StatusBadRequest)
 		return
@@ -46,14 +43,8 @@ func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
-	// only GET
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// extract
-	id := r.URL.Path[1:]
+	// extract id
+	id := chi.URLParam(r, "id")
 	if id == "" {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
@@ -66,16 +57,20 @@ func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Location", originalURL)
-	w.WriteHeader(http.StatusTemporaryRedirect)
+	http.Redirect(w, r, originalURL, http.StatusTemporaryRedirect)
 }
 
 func (h *Handler) NotFoundHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Bad request", http.StatusBadRequest)
 }
 
-func (h *Handler) SetupRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /", h.ShortenURLHandler)
-	mux.HandleFunc("GET /{id}", h.RedirectHandler)
-	mux.HandleFunc("/", h.NotFoundHandler)
+func (h *Handler) MethodNotAllowedHandler(w http.ResponseWriter, r *http.Request) {
+	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+}
+
+func (h *Handler) SetupRoutes(mux *chi.Mux) {
+	mux.Post("/", h.ShortenURLHandler)
+	mux.Get("/{id}", h.RedirectHandler)
+	mux.MethodNotAllowed(h.MethodNotAllowedHandler)
+	mux.NotFound(h.NotFoundHandler)
 }

@@ -9,6 +9,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/middleware"
+	"github.com/go-chi/chi/v5"
+
 	"shortener/internal/config"
 	"shortener/internal/handler"
 	"shortener/internal/repository"
@@ -35,12 +38,16 @@ func main() {
 
 	handler := handler.NewHandler(service)
 
-	mux := http.NewServeMux()
-	handler.SetupRoutes(mux)
+	r := chi.NewRouter()
+
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+
+	handler.SetupRoutes(r)
 
 	server := &http.Server{
 		Addr:    ":" + cfg.Port,
-		Handler: mux,
+		Handler: r,
 	}
 
 	stop := make(chan os.Signal, 1)
