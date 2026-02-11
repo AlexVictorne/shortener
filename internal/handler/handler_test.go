@@ -191,6 +191,7 @@ func TestHandler_Router(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resp, body := testRequest(t, ts, tt.method, tt.url, tt.contentType)
+			defer resp.Body.Close()
 
 			assert.Equal(t, tt.status, resp.StatusCode)
 
