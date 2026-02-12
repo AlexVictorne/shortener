@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -34,7 +35,7 @@ func main() {
 
 	idGenerator := generator.NewGenerator(8)
 
-	service := service.NewTrimmerService(store, idGenerator, cfg.BaseURL)
+	service := service.NewTrimmerService(store, idGenerator, cfg.ResultURL)
 
 	handler := handler.NewHandler(service)
 
@@ -45,8 +46,13 @@ func main() {
 
 	handler.SetupRoutes(r)
 
+	serverAddr, err := url.Parse(cfg.BaseURL)
+	if err != nil {
+		log.Fatalf("Invalid server address: %v", err)
+	}
+
 	server := &http.Server{
-		Addr:    ":" + cfg.Port,
+		Addr:    serverAddr.Host,
 		Handler: r,
 	}
 
@@ -54,7 +60,8 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
-		log.Printf("Server starting on %s", cfg.BaseURL)
+		log.Printf("Server starting on %s", serverAddr.String())
+		log.Printf("Result link direct to: %s", cfg.ResultURL)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server error: %v", err)
