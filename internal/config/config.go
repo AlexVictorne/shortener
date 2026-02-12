@@ -55,6 +55,11 @@ func ValidateURL(val string, def string, name string) string {
 	port := u.Port()
 
 	defURL, err := url.Parse(def)
+	if err != nil {
+		log.Printf("%s is invalid ('%s'), but we using it", "defURL", def)
+		return def
+	}
+
 	defScheme := defURL.Scheme
 	defHostname := defURL.Hostname()
 	defPort := defURL.Port()
