@@ -45,40 +45,28 @@ func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (strin
 		return s.buildShortURL(existingURL.ID), nil
 	}
 
-	shortID, err := s.generateUniqueID(ctx)
-	if err != nil {
-		return "", fmt.Errorf("failed to generate ID: %w", err)
-	}
-
-	urlStored := &model.ShortURL{
-		ID:          shortID,
-		OriginalURL: normalizedURL,
-	}
-
-	if err := s.storage.Create(ctx, urlStored); err != nil {
-		return "", fmt.Errorf("storage error: %w", err)
-	}
-
-	return s.buildShortURL(shortID), nil
-}
-
-func (s *TrimmerService) generateUniqueID(ctx context.Context) (string, error) {
 	const maxAttempts = 10
-
 	for i := 0; i < maxAttempts; i++ {
 		shortID, err := s.generator.GenerateID()
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("failed to generate ID: %w", err)
 		}
 
-		exists, err := s.checkIDExists(ctx, shortID)
-		if err != nil {
-			return "", err
+		urlStored := &model.ShortURL{
+			ID:          shortID,
+			OriginalURL: normalizedURL,
 		}
 
-		if !exists {
-			return shortID, nil
+		err = s.storage.Create(ctx, urlStored)
+		if err == nil {
+			return s.buildShortURL(shortID), nil
 		}
+
+		if errors.Is(err, repository.ErrConflict) {
+			continue
+		}
+
+		return "", fmt.Errorf("storage error: %w", err)
 	}
 
 	return "", errors.New("failed to generate unique ID: max attempts reached")
@@ -102,10 +90,6 @@ func (s *TrimmerService) GetOriginalURL(ctx context.Context, shortURL string) (s
 		return "", err
 	}
 
-	if !s.generator.Validate(shortID) {
-		return "", errors.New("invalid short ID format")
-	}
-
 	urlStored, err := s.storage.Get(ctx, shortID)
 	if err != nil {
 		return "", fmt.Errorf("storage error: %w", err)
@@ -115,7 +99,12 @@ func (s *TrimmerService) GetOriginalURL(ctx context.Context, shortURL string) (s
 }
 
 func (s *TrimmerService) buildShortURL(id string) string {
-	return strings.TrimSuffix(s.baseURL, "/") + "/" + id
+	u, err := url.JoinPath(s.baseURL, id)
+	if err != nil {
+		return strings.TrimSuffix(s.baseURL, "/") + "/" + id
+	}
+
+	return u
 }
 
 func (s *TrimmerService) validateURL(rawURL string) error {
