@@ -52,25 +52,32 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	errChan := make(chan error, 1)
+
 	go func() {
 		log.Printf("Server starting on %s", serverAddr.String())
 		log.Printf("Result link direct to: %s", cfg.ResultURL)
-
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("Server error: %v", err)
+		err := server.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errChan <- err
+		} else {
+			errChan <- nil
 		}
 	}()
 
-	<-ctx.Done()
-
-	log.Println("Shutdown server...")
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Fatalf("Server shutdown error: %v", err)
+	select {
+	case <-ctx.Done():
+		log.Println("Shutdown server...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("Server shutdown error: %v", err)
+		}
+		log.Println("Server stopped")
+	case err := <-errChan:
+		if err != nil {
+			stop()
+			log.Fatalf("Server error: %v", err)
+		}
 	}
-
-	log.Println("Server stopped")
 }
