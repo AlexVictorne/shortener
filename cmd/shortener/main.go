@@ -37,9 +37,6 @@ func main() {
 	store := repository.NewMemStorage()
 	defer store.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	idGenerator := generator.NewGenerator(8)
 
 	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
