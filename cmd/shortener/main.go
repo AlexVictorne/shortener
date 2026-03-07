@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -10,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/middleware"
 	"github.com/go-chi/chi/v5"
 
 	"shortener/internal/config"
@@ -29,10 +29,6 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := store.Ping(ctx); err != nil {
-		log.Fatalf("storage ping failed: %v", err)
-	}
-
 	idGenerator := generator.NewGenerator(8)
 
 	service := service.NewTrimmerService(store, idGenerator, cfg.ResultURL)
@@ -40,9 +36,6 @@ func main() {
 	handler := handler.NewHandler(service)
 
 	r := chi.NewRouter()
-
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
 
 	handler.SetupRoutes(r)
 
@@ -56,27 +49,26 @@ func main() {
 		Handler: r,
 	}
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	go func() {
 		log.Printf("Server starting on %s", serverAddr.String())
 		log.Printf("Result link direct to: %s", cfg.ResultURL)
 
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("Server error: %v", err)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("Server error: %v", err)
 		}
 	}()
 
-	<-stop
+	<-ctx.Done()
 
 	log.Println("Shutdown server...")
 
-	// Graceful shutdown
-	ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("Server shutdown error: %v", err)
 	}
 

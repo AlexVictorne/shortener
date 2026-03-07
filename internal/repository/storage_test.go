@@ -149,27 +149,3 @@ func TestMemStorage_GetByOriginal(t *testing.T) {
 		})
 	}
 }
-
-func TestMemStorage_Ping(t *testing.T) {
-	tests := []struct {
-		name    string
-		wantErr bool
-	}{
-		{name: "ok", wantErr: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			s := repository.NewMemStorage()
-			gotErr := s.Ping(context.Background())
-			if gotErr != nil {
-				if !tt.wantErr {
-					t.Errorf("Ping failed: %v", gotErr)
-				}
-				return
-			}
-			if tt.wantErr {
-				t.Fatal("Ping succeeded unexpectedly")
-			}
-		})
-	}
-}

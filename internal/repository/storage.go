@@ -82,21 +82,6 @@ func (s *MemStorage) GetByOriginal(ctx context.Context, originalURL string) (*mo
 	return s.Get(ctx, shortID)
 }
 
-func (s *MemStorage) Ping(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.urls == nil || s.index == nil {
-		return errors.New("storage not initialized")
-	}
-
-	return nil
-}
-
 func (s *MemStorage) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

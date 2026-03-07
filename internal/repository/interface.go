@@ -11,6 +11,5 @@ type Storage interface {
 	Get(ctx context.Context, ID string) (*model.ShortURL, error)
 	GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error)
 
-	Ping(ctx context.Context) error
 	Close() error
 }
