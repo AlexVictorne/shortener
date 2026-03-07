@@ -3,6 +3,7 @@ package validator
 import (
 	"errors"
 	"net/url"
+	"strings"
 )
 
 func ValidateURL(val string) (string, error) {
@@ -11,6 +12,10 @@ func ValidateURL(val string) (string, error) {
 	}
 
 	origVal := val
+
+	if !strings.Contains(val, "://") {
+		val = "http://" + val
+	}
 
 	u, err := url.Parse(val)
 	if err != nil {

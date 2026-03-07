@@ -11,9 +11,9 @@ func TestValidateURL(t *testing.T) {
 	}{
 		{"valid http", "http://127.0.0.1:8080", "http://127.0.0.1:8080", false},
 		{"valid https", "https://127.0.0.1:8080", "https://127.0.0.1:8080", false},
-		{"no scheme by ip", "127.0.0.1:8080", "", true},
+		{"no scheme by ip", "127.0.0.1:8080", "http://127.0.0.1:8080", false},
 		{"without hostname", "http://:8081", "", true},
-		{"no scheme by localhost", "localhost:8888", "", true},
+		{"no scheme by localhost", "localhost:8888", "http://localhost:8888", false},
 		{"valid by localhost", "http://localhost:8000", "http://localhost:8000", false},
 		{"invalid url", "http://%41:8080/", "", true},
 		{"empty input", "", "", true},
