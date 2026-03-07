@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"shortener/internal/model"
@@ -13,8 +14,16 @@ var (
 	ErrConflict = errors.New("conflict")
 )
 
+type Storage interface {
+	Create(ctx context.Context, url *model.ShortURL) error
+	Get(ctx context.Context, ID string) (*model.ShortURL, error)
+	GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error)
+
+	Close() error
+}
+
 type MemStorage struct {
-	mu    sync.RWMutex
+	mu    sync.Mutex
 	urls  map[string]*model.ShortURL
 	index map[string]string
 }
@@ -28,18 +37,18 @@ func NewMemStorage() *MemStorage {
 
 func (s *MemStorage) Create(ctx context.Context, url *model.ShortURL) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		return fmt.Errorf("context error in Create: %w", err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if _, exists := s.urls[url.ID]; exists {
-		return ErrConflict
+		return fmt.Errorf("ID conflict: %w", ErrConflict)
 	}
 
 	if _, exists := s.index[url.OriginalURL]; exists {
-		return ErrConflict
+		return fmt.Errorf("OriginalURL conflict: %w", ErrConflict)
 	}
 
 	s.urls[url.ID] = url
@@ -53,12 +62,12 @@ func (s *MemStorage) Get(ctx context.Context, ID string) (*model.ShortURL, error
 		return nil, err
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	url, exists := s.urls[ID]
 	if !exists {
-		return nil, ErrNotFound
+		return nil, fmt.Errorf("ID not found: %w", ErrNotFound)
 	}
 
 	urlCopy := *url
@@ -71,15 +80,21 @@ func (s *MemStorage) GetByOriginal(ctx context.Context, originalURL string) (*mo
 		return nil, err
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	shortID, exists := s.index[originalURL]
 	if !exists {
-		return nil, ErrNotFound
+		return nil, fmt.Errorf("originalURL not found: %w", ErrNotFound)
 	}
 
-	return s.Get(ctx, shortID)
+	url, exists := s.urls[shortID]
+	if !exists {
+		return nil, fmt.Errorf("shortID not found: %w", ErrNotFound)
+	}
+
+	urlCopy := *url
+	return &urlCopy, nil
 }
 
 func (s *MemStorage) Close() error {
