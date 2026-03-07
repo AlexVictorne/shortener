@@ -52,7 +52,7 @@ func TestHandler_ShortenURLHandler(t *testing.T) {
 			method:      http.MethodPost,
 			contentType: "text/plain",
 			body:        string(make([]byte, 3000)), // too large and internal error from service
-			wantStatus:  http.StatusInternalServerError,
+			wantStatus:  http.StatusBadRequest,
 		},
 	}
 
@@ -140,8 +140,8 @@ func TestHandler_NotFoundHandler(t *testing.T) {
 	h.NotFoundHandler(w, req)
 	res := w.Result()
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusBadRequest {
-		t.Errorf("got status %d, want %d", res.StatusCode, http.StatusBadRequest)
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("got status %d, want %d", res.StatusCode, http.StatusNotFound)
 	}
 }
 
@@ -181,11 +181,11 @@ func TestHandler_Router(t *testing.T) {
 		want        string
 		status      int
 	}{
-		{name: "empty GET", url: "/", method: http.MethodGet, want: "Method not allowed", status: http.StatusMethodNotAllowed},
-		{name: "not found GET", url: "/abc12345", method: http.MethodGet, want: "Not found", status: http.StatusNotFound},
-		{name: "other adress GET", url: "/yaopo/oi", method: http.MethodGet, want: "Bad request", status: http.StatusBadRequest},
-		{name: "unsupported type POST", url: "/", contentType: "application/json", method: http.MethodPost, want: "Unsupported content type", status: http.StatusBadRequest},
-		{name: "empty POST", url: "/", contentType: "text/plain", method: http.MethodPost, want: "Internal server error", status: http.StatusInternalServerError},
+		{name: "empty GET", url: "/", method: http.MethodGet, want: http.StatusText(http.StatusMethodNotAllowed), status: http.StatusMethodNotAllowed},
+		{name: "not found GET", url: "/abc12345", method: http.MethodGet, want: http.StatusText(http.StatusNotFound), status: http.StatusNotFound},
+		{name: "other adress GET", url: "/yaopo/oi", method: http.MethodGet, want: http.StatusText(http.StatusNotFound), status: http.StatusNotFound},
+		{name: "unsupported type POST", url: "/", contentType: "application/json", method: http.MethodPost, want: http.StatusText(http.StatusBadRequest), status: http.StatusBadRequest},
+		{name: "empty POST", url: "/", contentType: "text/plain", method: http.MethodPost, want: http.StatusText(http.StatusInternalServerError), status: http.StatusInternalServerError},
 	}
 
 	for _, tt := range tests {

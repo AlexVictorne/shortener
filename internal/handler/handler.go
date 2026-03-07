@@ -2,6 +2,7 @@ package handler
 
 import (
 	"io"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/middleware"
@@ -22,19 +23,20 @@ func NewHandler(service *service.TrimmerService) *Handler {
 
 func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Content-Type") != "text/plain" {
-		http.Error(w, "Unsupported content type", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 2048))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 2048))
 	if err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	shortURL, err := h.service.TrimURL(r.Context(), string(body))
 	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		log.Printf("TrimURL error: %v", err)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
@@ -53,14 +55,14 @@ func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if id == "" {
-		http.Error(w, "Bad request", http.StatusBadRequest)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
 
 	// load original
 	originalURL, err := h.service.GetOriginalURL(r.Context(), id)
 	if err != nil {
-		http.Error(w, "Not found", http.StatusNotFound)
+		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
 
@@ -68,11 +70,11 @@ func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) NotFoundHandler(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "Bad request", http.StatusBadRequest)
+	http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 }
 
 func (h *Handler) MethodNotAllowedHandler(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 }
 
 func (h *Handler) SetupRoutes(mux chi.Router) {
