@@ -18,10 +18,21 @@ import (
 	"shortener/internal/repository"
 	"shortener/internal/service"
 	"shortener/pkg/generator"
+	"shortener/pkg/validator"
 )
 
 func main() {
 	cfg := config.LoadConfig()
+
+	// Валидация параметров конфигурации рядом с использованием
+	validatedBaseURL, err := validator.ValidateURL(cfg.BaseURL)
+	if err != nil {
+		log.Fatalf("BaseURL validation error: %v", err)
+	}
+	validatedResultURL, err := validator.ValidateURL(cfg.ResultURL)
+	if err != nil {
+		log.Fatalf("ResultURL validation error: %v", err)
+	}
 
 	store := repository.NewMemStorage()
 	defer store.Close()
@@ -31,7 +42,7 @@ func main() {
 
 	idGenerator := generator.NewGenerator(8)
 
-	service := service.NewTrimmerService(store, idGenerator, cfg.ResultURL)
+	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
 
 	handler := handler.NewHandler(service)
 
@@ -39,7 +50,7 @@ func main() {
 
 	handler.SetupRoutes(r)
 
-	serverAddr, err := url.Parse(cfg.BaseURL)
+	serverAddr, err := url.Parse(validatedBaseURL)
 	if err != nil {
 		log.Fatalf("Invalid server address: %v", err)
 	}
