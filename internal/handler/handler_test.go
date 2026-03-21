@@ -18,6 +18,75 @@ import (
 	"shortener/pkg/generator"
 )
 
+func TestHandler_ShortenURLJSONHandler(t *testing.T) {
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+	h := handler.NewHandler(svc)
+
+	tests := []struct {
+		name            string
+		method          string
+		contentType     string
+		body            string
+		wantStatus      int
+		wantInResponse  string
+		wantContentType string
+	}{
+		{
+			name:            "success",
+			method:          http.MethodPost,
+			contentType:     "application/json",
+			body:            `{"url": "https://ya.ru"}`,
+			wantStatus:      http.StatusCreated,
+			wantInResponse:  "http://localhost:8080/",
+			wantContentType: "application/json",
+		},
+		{
+			name:        "bad content type",
+			method:      http.MethodPost,
+			contentType: "text/plain",
+			body:        `{"url": "https://ya.ru"}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "empty url",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"url": ""}`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "invalid json",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `{"url":`,
+			wantStatus:  http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
+			w := httptest.NewRecorder()
+			h.ShortenURLJSONHandler(w, req)
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, tt.wantStatus, res.StatusCode)
+
+			if tt.wantInResponse != "" {
+				b, _ := io.ReadAll(res.Body)
+				assert.Contains(t, string(b), tt.wantInResponse)
+			}
+			if tt.wantContentType != "" {
+				assert.Equal(t, tt.wantContentType, res.Header.Get("Content-Type"))
+			}
+		})
+	}
+}
+
 func TestHandler_ShortenURLHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
