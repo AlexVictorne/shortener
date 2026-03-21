@@ -2,13 +2,13 @@ package handler
 
 import (
 	"io"
-	"log"
 	"net/http"
 
-	"github.com/go-chi/chi/middleware"
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog/log"
 
 	"shortener/internal/service"
+	"shortener/pkg/middleware"
 )
 
 type Handler struct {
@@ -78,8 +78,7 @@ func (h *Handler) MethodNotAllowedHandler(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) SetupRoutes(mux chi.Router) {
-	mux.Use(middleware.Logger)
-	mux.Use(middleware.Recoverer)
+	mux.Use(middleware.RequestResponseLogger)
 
 	mux.Post("/", h.ShortenURLHandler)
 	mux.Get("/{id}", h.RedirectHandler)
