@@ -149,3 +149,30 @@ func TestMemStorage_GetByOriginal(t *testing.T) {
 		})
 	}
 }
+
+func TestMemStorage_UUID_AutoIncrement(t *testing.T) {
+	s := repository.NewMemStorage()
+	url1 := &model.ShortURL{ShortURL: "a1", OriginalURL: "https://ya.ru"}
+	url2 := &model.ShortURL{ShortURL: "a2", OriginalURL: "https://ya2.ru"}
+	url3 := &model.ShortURL{ShortURL: "a3", OriginalURL: "https://ya3.ru"}
+
+	if err := s.Create(context.Background(), url1); err != nil {
+		t.Fatalf("Create url1 failed: %v", err)
+	}
+	if err := s.Create(context.Background(), url2); err != nil {
+		t.Fatalf("Create url2 failed: %v", err)
+	}
+	if err := s.Create(context.Background(), url3); err != nil {
+		t.Fatalf("Create url3 failed: %v", err)
+	}
+
+	if url1.UUID == 0 || url2.UUID == 0 || url3.UUID == 0 {
+		t.Error("UUID should be set and non-zero")
+	}
+	if url1.UUID == url2.UUID || url2.UUID == url3.UUID || url1.UUID == url3.UUID {
+		t.Error("UUIDs should be unique for each ShortURL")
+	}
+	if !(url1.UUID < url2.UUID && url2.UUID < url3.UUID) {
+		t.Error("UUIDs should increment with each new ShortURL")
+	}
+}

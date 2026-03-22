@@ -23,19 +23,26 @@ type Storage interface {
 }
 
 type MemStorage struct {
-	mu    sync.Mutex
-	urls  map[string]*model.ShortURL // key: shortURL
-	index map[string]string          // key: originalURL, value: shortURL
+	mu       sync.Mutex
+	urls     map[string]*model.ShortURL // key: shortURL
+	index    map[string]string          // key: originalURL, value: shortURL
+	nextUUID int
 }
 
 func NewMemStorage() *MemStorage {
 	return &MemStorage{
-		urls:  make(map[string]*model.ShortURL),
-		index: make(map[string]string),
+		urls:     make(map[string]*model.ShortURL),
+		index:    make(map[string]string),
+		nextUUID: 1,
 	}
 }
 
 func (s *MemStorage) Create(ctx context.Context, url *model.ShortURL) error {
+	// Присваиваем UUID, если он не задан
+	if url.UUID == 0 {
+		url.UUID = s.nextUUID
+		s.nextUUID++
+	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("context error in Create: %w", err)
 	}
