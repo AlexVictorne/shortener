@@ -38,7 +38,10 @@ func main() {
 		log.Fatalf("ResultURL validation error: %v", err)
 	}
 
-	store := repository.NewMemStorage()
+	store, err := repository.NewMemStorageWithFile(cfg.FileStoragePath)
+	if err != nil {
+		log.Fatalf("Storage initialization error: %v", err)
+	}
 	defer store.Close()
 
 	idGenerator := generator.NewGenerator(8)
