@@ -10,28 +10,39 @@ import (
 )
 
 type gzipResponseWriter struct {
-	io.Writer
 	http.ResponseWriter
+	writer      io.Writer
+	statusCode  int
+	wroteHeader bool
+}
 
-	hasWrittenHeader bool
+func (w *gzipResponseWriter) WriteHeader(statusCode int) {
+	if w.wroteHeader {
+		return
+	}
+	w.statusCode = statusCode
+	w.wroteHeader = true
+
+	if statusCode < 400 {
+		w.Header().Set("Content-Encoding", "gzip")
+	}
+
+	w.ResponseWriter.WriteHeader(statusCode)
 }
 
 func (w *gzipResponseWriter) Write(b []byte) (int, error) {
-	if !w.hasWrittenHeader {
-		if w.Header().Get("Content-Encoding") == "" {
-			w.Header().Set("Content-Encoding", "gzip")
-		}
-		w.hasWrittenHeader = true
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
 	}
-	n, err := w.Writer.Write(b)
-	if err != nil {
-		http.Error(w.ResponseWriter, "Failed to write gzip response", http.StatusInternalServerError)
+	// Не сжимаем ошибочные ответы
+	if w.statusCode >= 400 {
+		return w.ResponseWriter.Write(b)
 	}
-	return n, err
+	return w.writer.Write(b)
 }
 
 func (w *gzipResponseWriter) Flush() {
-	if f, ok := w.Writer.(interface{ Flush() error }); ok {
+	if f, ok := w.writer.(interface{ Flush() error }); ok {
 		_ = f.Flush()
 	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
@@ -59,13 +70,11 @@ func GzipMiddleware(next http.Handler) http.Handler {
 		}
 
 		acceptEncoding := r.Header.Get("Accept-Encoding")
-		if strings.Contains(acceptEncoding, "gzip") {
+		if strings.Contains(acceptEncoding, "gzip") && w.Header().Get("Content-Encoding") == "" {
 			w.Header().Set("Vary", "Accept-Encoding")
 			gz := gzip.NewWriter(w)
-			defer func() {
-				_ = gz.Close()
-			}()
-			gzw := &gzipResponseWriter{ResponseWriter: w, Writer: gz}
+			defer gz.Close()
+			gzw := &gzipResponseWriter{ResponseWriter: w, writer: gz, statusCode: http.StatusOK}
 			w = gzw
 		}
 
