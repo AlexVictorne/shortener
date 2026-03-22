@@ -22,6 +22,7 @@ func TestGzipMiddleware_CompressesResponse(t *testing.T) {
 	wrapped.ServeHTTP(rec, req)
 
 	resp := rec.Result()
+	defer resp.Body.Close()
 	if resp.Header.Get("Content-Encoding") != "gzip" {
 		t.Errorf("expected gzip encoding, got %q", resp.Header.Get("Content-Encoding"))
 	}
@@ -75,6 +76,7 @@ func TestGzipMiddleware_PassThrough(t *testing.T) {
 	wrapped.ServeHTTP(rec, req)
 
 	resp := rec.Result()
+	defer resp.Body.Close()
 	if resp.Header.Get("Content-Encoding") == "gzip" {
 		t.Errorf("did not expect gzip encoding")
 	}
