@@ -115,6 +115,7 @@ func (h *Handler) MethodNotAllowedHandler(w http.ResponseWriter, r *http.Request
 
 func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Use(middleware.RequestResponseLogger)
+	mux.Use(middleware.GzipMiddleware)
 
 	mux.Post("/", h.ShortenURLHandler)
 	mux.Post("/api/shorten", h.ShortenURLJSONHandler)
