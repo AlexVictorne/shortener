@@ -16,7 +16,7 @@ var (
 
 type Storage interface {
 	Create(ctx context.Context, url *model.ShortURL) error
-	Get(ctx context.Context, ID string) (*model.ShortURL, error)
+	Get(ctx context.Context, shortURL string) (*model.ShortURL, error)
 	GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error)
 
 	Close() error
@@ -24,8 +24,8 @@ type Storage interface {
 
 type MemStorage struct {
 	mu    sync.Mutex
-	urls  map[string]*model.ShortURL
-	index map[string]string
+	urls  map[string]*model.ShortURL // key: shortURL
+	index map[string]string          // key: originalURL, value: shortURL
 }
 
 func NewMemStorage() *MemStorage {
@@ -43,21 +43,21 @@ func (s *MemStorage) Create(ctx context.Context, url *model.ShortURL) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.urls[url.ID]; exists {
-		return fmt.Errorf("ID conflict: %w", ErrConflict)
+	if _, exists := s.urls[url.ShortURL]; exists {
+		return fmt.Errorf("ShortURL conflict: %w", ErrConflict)
 	}
 
 	if _, exists := s.index[url.OriginalURL]; exists {
 		return fmt.Errorf("OriginalURL conflict: %w", ErrConflict)
 	}
 
-	s.urls[url.ID] = url
-	s.index[url.OriginalURL] = url.ID
+	s.urls[url.ShortURL] = url
+	s.index[url.OriginalURL] = url.ShortURL
 
 	return nil
 }
 
-func (s *MemStorage) Get(ctx context.Context, ID string) (*model.ShortURL, error) {
+func (s *MemStorage) Get(ctx context.Context, shortURL string) (*model.ShortURL, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -65,9 +65,9 @@ func (s *MemStorage) Get(ctx context.Context, ID string) (*model.ShortURL, error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	url, exists := s.urls[ID]
+	url, exists := s.urls[shortURL]
 	if !exists {
-		return nil, fmt.Errorf("ID not found: %w", ErrNotFound)
+		return nil, fmt.Errorf("ShortURL not found: %w", ErrNotFound)
 	}
 
 	urlCopy := *url
@@ -83,14 +83,14 @@ func (s *MemStorage) GetByOriginal(ctx context.Context, originalURL string) (*mo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	shortID, exists := s.index[originalURL]
+	shortURL, exists := s.index[originalURL]
 	if !exists {
 		return nil, fmt.Errorf("originalURL not found: %w", ErrNotFound)
 	}
 
-	url, exists := s.urls[shortID]
+	url, exists := s.urls[shortURL]
 	if !exists {
-		return nil, fmt.Errorf("shortID not found: %w", ErrNotFound)
+		return nil, fmt.Errorf("shortURL not found: %w", ErrNotFound)
 	}
 
 	urlCopy := *url

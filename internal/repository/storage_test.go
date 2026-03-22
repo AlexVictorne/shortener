@@ -16,19 +16,19 @@ func TestMemStorage_Create(t *testing.T) {
 	}{
 		{
 			name:    "success",
-			url:     &model.ShortURL{ID: "abc", OriginalURL: "https://ya.ru"},
+			url:     &model.ShortURL{ShortURL: "abc", OriginalURL: "https://ya.ru"},
 			wantErr: false,
 		},
 		{
 			name:    "conflict by ID",
-			url:     &model.ShortURL{ID: "abc", OriginalURL: "https://ya.ru"},
-			prefill: []*model.ShortURL{{ID: "abc", OriginalURL: "https://yandex.ru"}},
+			url:     &model.ShortURL{ShortURL: "abc", OriginalURL: "https://ya.ru"},
+			prefill: []*model.ShortURL{{ShortURL: "abc", OriginalURL: "https://yandex.ru"}},
 			wantErr: true,
 		},
 		{
 			name:    "conflict by OriginalURL",
-			url:     &model.ShortURL{ID: "def", OriginalURL: "https://ya.ru"},
-			prefill: []*model.ShortURL{{ID: "abc", OriginalURL: "https://ya.ru"}},
+			url:     &model.ShortURL{ShortURL: "def", OriginalURL: "https://ya.ru"},
+			prefill: []*model.ShortURL{{ShortURL: "abc", OriginalURL: "https://ya.ru"}},
 			wantErr: true,
 		},
 	}
@@ -62,9 +62,9 @@ func TestMemStorage_Get(t *testing.T) {
 	}{
 		{
 			name:    "found",
-			prefill: []*model.ShortURL{{ID: "abc", OriginalURL: "https://ya.ru"}},
+			prefill: []*model.ShortURL{{ShortURL: "abc", OriginalURL: "https://ya.ru"}},
 			ID:      "abc",
-			want:    &model.ShortURL{ID: "abc", OriginalURL: "https://ya.ru"},
+			want:    &model.ShortURL{ShortURL: "abc", OriginalURL: "https://ya.ru"},
 			wantErr: false,
 		},
 		{
@@ -93,7 +93,7 @@ func TestMemStorage_Get(t *testing.T) {
 			if got == nil && tt.want != nil || got != nil && tt.want == nil {
 				t.Errorf("Get = %v, want %v", got, tt.want)
 			} else if got != nil && tt.want != nil {
-				if got.ID != tt.want.ID || got.OriginalURL != tt.want.OriginalURL {
+				if got.ShortURL != tt.want.ShortURL || got.OriginalURL != tt.want.OriginalURL {
 					t.Errorf("Get = %v, want %v", got, tt.want)
 				}
 			}
@@ -111,9 +111,9 @@ func TestMemStorage_GetByOriginal(t *testing.T) {
 	}{
 		{
 			name:        "found",
-			prefill:     []*model.ShortURL{{ID: "abc", OriginalURL: "https://ya.ru"}},
+			prefill:     []*model.ShortURL{{ShortURL: "abc", OriginalURL: "https://ya.ru"}},
 			originalURL: "https://ya.ru",
-			want:        &model.ShortURL{ID: "abc", OriginalURL: "https://ya.ru"},
+			want:        &model.ShortURL{ShortURL: "abc", OriginalURL: "https://ya.ru"},
 			wantErr:     false,
 		},
 		{
@@ -142,7 +142,7 @@ func TestMemStorage_GetByOriginal(t *testing.T) {
 			if got == nil && tt.want != nil || got != nil && tt.want == nil {
 				t.Errorf("GetByOriginal = %v, want %v", got, tt.want)
 			} else if got != nil && tt.want != nil {
-				if got.ID != tt.want.ID || got.OriginalURL != tt.want.OriginalURL {
+				if got.ShortURL != tt.want.ShortURL || got.OriginalURL != tt.want.OriginalURL {
 					t.Errorf("GetByOriginal = %v, want %v", got, tt.want)
 				}
 			}
