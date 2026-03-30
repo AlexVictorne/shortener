@@ -21,30 +21,11 @@ func NewPgStorage(ctx context.Context, dsn string) (*PgStorage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
-
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
-
-	s := &PgStorage{db: db}
-	if err := s.bootstrap(ctx); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("bootstrap db: %w", err)
-	}
-
-	return s, nil
-}
-
-func (s *PgStorage) bootstrap(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS short_urls (
-			uuid         SERIAL PRIMARY KEY,
-			short_url    TEXT NOT NULL UNIQUE,
-			original_url TEXT NOT NULL UNIQUE
-		)
-	`)
-	return err
+	return &PgStorage{db: db}, nil
 }
 
 func (s *PgStorage) Create(ctx context.Context, url *model.ShortURL) error {

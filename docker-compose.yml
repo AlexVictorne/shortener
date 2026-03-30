@@ -17,6 +17,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
-
+  migrate:
+    image: migrate/migrate:v4.19.1
+    depends_on:
+      - postgres
+    volumes:
+      - ./migrations:/migrations
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "sleep 5 && migrate -path=/migrations -database 'postgres://shortener:shortener@postgres:5432/shortener?sslmode=disable' up"
 volumes:
   postgres_data:
