@@ -42,7 +42,7 @@ func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (strin
 
 	existingURL, err := s.storage.GetByOriginal(ctx, normalizedURL)
 	if err == nil && existingURL != nil {
-		return s.buildShortURL(existingURL.ID), nil
+		return s.buildShortURL(existingURL.ShortURL), nil
 	}
 
 	const maxAttempts = 10
@@ -53,7 +53,7 @@ func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (strin
 		}
 
 		urlStored := &model.ShortURL{
-			ID:          shortID,
+			ShortURL:    shortID,
 			OriginalURL: normalizedURL,
 		}
 

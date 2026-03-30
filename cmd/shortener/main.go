@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/rs/zerolog"
 
 	"shortener/internal/config"
 	"shortener/internal/handler"
@@ -22,6 +23,9 @@ import (
 )
 
 func main() {
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	zerolog.TimeFieldFormat = time.RFC3339Nano
+
 	cfg := config.LoadConfig()
 
 	// Валидация параметров конфигурации рядом с использованием
@@ -34,7 +38,10 @@ func main() {
 		log.Fatalf("ResultURL validation error: %v", err)
 	}
 
-	store := repository.NewMemStorage()
+	store, err := repository.NewMemStorageWithFile(cfg.FileStoragePath)
+	if err != nil {
+		log.Fatalf("Storage initialization error: %v", err)
+	}
 	defer store.Close()
 
 	idGenerator := generator.NewGenerator(8)
