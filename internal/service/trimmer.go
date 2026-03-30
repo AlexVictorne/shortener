@@ -161,51 +161,7 @@ func extractID(shortURL string) (string, error) {
 }
 
 func (s *TrimmerService) BatchCreate(ctx context.Context, urls []*model.ShortURL) error {
-	if len(urls) == 0 {
-		return nil
-	}
-
-	var allConflict = true
-	for _, url := range urls {
-		if err := s.validateURL(url.OriginalURL); err != nil {
-			return err
-		}
-		normalized, err := s.normalizeURL(url.OriginalURL)
-		if err != nil {
-			return err
-		}
-		url.OriginalURL = normalized
-	}
-
-	err := s.storage.BatchCreate(ctx, urls)
-	if err == nil {
-		return nil
-	}
-
-	if errors.Is(err, repository.ErrConflict) {
-		for _, url := range urls {
-			if url.UUID == 0 {
-				existing, getErr := s.storage.GetByOriginal(ctx, url.OriginalURL)
-				if getErr == nil && existing != nil {
-					url.ShortURL = existing.ShortURL
-					url.UUID = existing.UUID
-				}
-			}
-		}
-		// Проверяем: если хотя бы один url.UUID != 0 и short_url не пустой (то есть был создан новый)
-		for _, url := range urls {
-			if url.UUID != 0 {
-				allConflict = false
-				break
-			}
-		}
-		if allConflict {
-			return ErrConflict
-		}
-		return nil
-	} else {
-		return err
-	}
+	return s.storage.BatchCreate(ctx, urls)
 }
 
 func (s *TrimmerService) BuildShortURL(id string) string {
