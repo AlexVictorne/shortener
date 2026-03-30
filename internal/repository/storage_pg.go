@@ -29,7 +29,7 @@ func NewPgStorage(ctx context.Context, dsn string) (*PgStorage, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
-	if err := ApplyMigrations(db, "../../migrations", dsn); err != nil {
+	if err := ApplyMigrations(db, "migrations", dsn); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrations: %w", err)
 	}
