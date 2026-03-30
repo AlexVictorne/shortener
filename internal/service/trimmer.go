@@ -12,6 +12,8 @@ import (
 	"shortener/pkg/generator"
 )
 
+var ErrConflict = errors.New("conflict")
+
 type TrimmerService struct {
 	storage   repository.Storage
 	generator generator.IDGenerator
@@ -65,11 +67,10 @@ func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (strin
 		if errors.Is(err, repository.ErrConflict) {
 			continue
 		}
-
 		return "", fmt.Errorf("storage error: %w", err)
 	}
 
-	return "", errors.New("failed to generate unique ID: max attempts reached")
+	return "", ErrConflict
 }
 
 func (s *TrimmerService) checkIDExists(ctx context.Context, shortID string) (bool, error) {
@@ -160,7 +161,45 @@ func extractID(shortURL string) (string, error) {
 }
 
 func (s *TrimmerService) BatchCreate(ctx context.Context, urls []*model.ShortURL) error {
-	return s.storage.BatchCreate(ctx, urls)
+	if len(urls) == 0 {
+		return nil
+	}
+
+	var hadConflict bool
+	for _, url := range urls {
+		if err := s.validateURL(url.OriginalURL); err != nil {
+			return err
+		}
+		normalized, err := s.normalizeURL(url.OriginalURL)
+		if err != nil {
+			return err
+		}
+		url.OriginalURL = normalized
+	}
+
+	err := s.storage.BatchCreate(ctx, urls)
+	if err == nil {
+		return nil
+	}
+
+	if errors.Is(err, repository.ErrConflict) {
+		hadConflict = true
+		for _, url := range urls {
+			if url.UUID == 0 {
+				existing, getErr := s.storage.GetByOriginal(ctx, url.OriginalURL)
+				if getErr == nil && existing != nil {
+					url.ShortURL = existing.ShortURL
+					url.UUID = existing.UUID
+				}
+			}
+		}
+	} else {
+		return err
+	}
+	if hadConflict {
+		return ErrConflict
+	}
+	return nil
 }
 
 func (s *TrimmerService) BuildShortURL(id string) string {

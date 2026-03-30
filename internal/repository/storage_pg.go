@@ -41,16 +41,26 @@ func (s *PgStorage) Create(ctx context.Context, url *model.ShortURL) error {
 	row := s.db.QueryRowContext(ctx, `
 		INSERT INTO short_urls (short_url, original_url)
 		VALUES ($1, $2)
+		ON CONFLICT (original_url) DO NOTHING
 		RETURNING uuid
 	`, url.ShortURL, url.OriginalURL)
 
-	if err := row.Scan(&url.UUID); err != nil {
+	err := row.Scan(&url.UUID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			existing, getErr := s.GetByOriginal(ctx, url.OriginalURL)
+			if getErr != nil {
+				return fmt.Errorf("conflict lookup: %w", getErr)
+			}
+			url.UUID = existing.UUID
+			url.ShortURL = existing.ShortURL
+			return fmt.Errorf("conflict: %w", ErrConflict)
+		}
 		if isUniqueViolation(err) {
 			return fmt.Errorf("conflict: %w", ErrConflict)
 		}
 		return fmt.Errorf("create: %w", err)
 	}
-
 	return nil
 }
 

@@ -371,7 +371,7 @@ func TestHandler_BatchShortenHandler(t *testing.T) {
 			method:      http.MethodPost,
 			contentType: "application/json",
 			body:        `[{"correlation_id":"1","original_url":"https://ya.ru"},{"correlation_id":"2","original_url":"https://ya.ru"}]`,
-			wantStatus:  http.StatusCreated,
+			wantStatus:  http.StatusConflict,
 		},
 	}
 
