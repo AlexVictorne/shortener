@@ -44,7 +44,7 @@ func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (strin
 
 	existingURL, err := s.storage.GetByOriginal(ctx, normalizedURL)
 	if err == nil && existingURL != nil {
-		return s.buildShortURL(existingURL.ShortURL), nil
+		return s.buildShortURL(existingURL.ShortURL), ErrConflict
 	}
 
 	const maxAttempts = 10
