@@ -270,3 +270,41 @@ func TestHandler_Router(t *testing.T) {
 		})
 	}
 }
+
+type mockPinger struct{ err error }
+
+func (m *mockPinger) Ping(ctx context.Context) error { return m.err }
+
+func TestHandler_PingHandler(t *testing.T) {
+	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
+
+	t.Run("no pinger", func(t *testing.T) {
+		h := handler.NewHandler(svc)
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		w := httptest.NewRecorder()
+		h.PingHandler(w, req)
+		res := w.Result()
+		defer res.Body.Close()
+		assert.Equal(t, http.StatusInternalServerError, res.StatusCode)
+	})
+
+	t.Run("pinger ok", func(t *testing.T) {
+		h := handler.NewHandler(svc).WithPinger(&mockPinger{err: nil})
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		w := httptest.NewRecorder()
+		h.PingHandler(w, req)
+		res := w.Result()
+		defer res.Body.Close()
+		assert.Equal(t, http.StatusOK, res.StatusCode)
+	})
+
+	t.Run("pinger error", func(t *testing.T) {
+		h := handler.NewHandler(svc).WithPinger(&mockPinger{err: assert.AnError})
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		w := httptest.NewRecorder()
+		h.PingHandler(w, req)
+		res := w.Result()
+		defer res.Body.Close()
+		assert.Equal(t, http.StatusInternalServerError, res.StatusCode)
+	})
+}

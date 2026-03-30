@@ -9,6 +9,7 @@ type Config struct {
 	BaseURL         string
 	ResultURL       string
 	FileStoragePath string
+	DatabaseDSN     string
 }
 
 func LoadConfig() *Config {
@@ -21,18 +22,23 @@ func LoadConfig() *Config {
 	envNameBaseURL := "BASE_URL"
 	flagNameFileStorage := "f"
 	envNameFileStorage := "FILE_STORAGE_PATH"
+	flagNameDatabaseDSN := "d"
+	envNameDatabaseDSN := "DATABASE_DSN"
 
 	var serverURL string
 	var resultURL string
 	var fileStoragePath string
+	var databaseDSN string
 
 	envServerURL := os.Getenv(envNameServerURL)
 	envResultURL := os.Getenv(envNameBaseURL)
 	envFileStorage := os.Getenv(envNameFileStorage)
+	envDatabaseDSN := os.Getenv(envNameDatabaseDSN)
 
 	flagServerURL := flag.String(flagNameServerURL, "", "server base url")
 	flagResultURL := flag.String(flagNameBaseURL, "", "server result url")
 	flagFileStorage := flag.String(flagNameFileStorage, "", "file storage path")
+	flagDatabaseDSN := flag.String(flagNameDatabaseDSN, "", "database connection DSN")
 	flag.Parse()
 
 	// Приоритет env > flag > default
@@ -60,9 +66,16 @@ func LoadConfig() *Config {
 		fileStoragePath = defaultFileStorage
 	}
 
+	if envDatabaseDSN != "" {
+		databaseDSN = envDatabaseDSN
+	} else if *flagDatabaseDSN != "" {
+		databaseDSN = *flagDatabaseDSN
+	}
+
 	return &Config{
 		BaseURL:         serverURL,
 		ResultURL:       resultURL,
 		FileStoragePath: fileStoragePath,
+		DatabaseDSN:     databaseDSN,
 	}
 }

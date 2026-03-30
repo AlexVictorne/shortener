@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,14 +13,24 @@ import (
 	"shortener/pkg/middleware"
 )
 
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
 type Handler struct {
 	service *service.TrimmerService
+	pinger  Pinger
 }
 
 func NewHandler(service *service.TrimmerService) *Handler {
 	return &Handler{
 		service: service,
 	}
+}
+
+func (h *Handler) WithPinger(p Pinger) *Handler {
+	h.pinger = p
+	return h
 }
 
 func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
@@ -113,10 +124,23 @@ func (h *Handler) MethodNotAllowedHandler(w http.ResponseWriter, r *http.Request
 	http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 }
 
+func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
+	if h.pinger == nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if err := h.pinger.Ping(r.Context()); err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Use(middleware.RequestResponseLogger)
 	mux.Use(middleware.GzipMiddleware)
 
+	mux.Get("/ping", h.PingHandler)
 	mux.Post("/", h.ShortenURLHandler)
 	mux.Post("/api/shorten", h.ShortenURLJSONHandler)
 	mux.Get("/{id}", h.RedirectHandler)
