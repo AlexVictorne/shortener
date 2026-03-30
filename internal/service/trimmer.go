@@ -165,7 +165,7 @@ func (s *TrimmerService) BatchCreate(ctx context.Context, urls []*model.ShortURL
 		return nil
 	}
 
-	var hadConflict bool
+	var allConflict = true
 	for _, url := range urls {
 		if err := s.validateURL(url.OriginalURL); err != nil {
 			return err
@@ -183,7 +183,6 @@ func (s *TrimmerService) BatchCreate(ctx context.Context, urls []*model.ShortURL
 	}
 
 	if errors.Is(err, repository.ErrConflict) {
-		hadConflict = true
 		for _, url := range urls {
 			if url.UUID == 0 {
 				existing, getErr := s.storage.GetByOriginal(ctx, url.OriginalURL)
@@ -193,13 +192,20 @@ func (s *TrimmerService) BatchCreate(ctx context.Context, urls []*model.ShortURL
 				}
 			}
 		}
+		// Проверяем: если хотя бы один url.UUID != 0 и short_url не пустой (то есть был создан новый)
+		for _, url := range urls {
+			if url.UUID != 0 {
+				allConflict = false
+				break
+			}
+		}
+		if allConflict {
+			return ErrConflict
+		}
+		return nil
 	} else {
 		return err
 	}
-	if hadConflict {
-		return ErrConflict
-	}
-	return nil
 }
 
 func (s *TrimmerService) BuildShortURL(id string) string {
