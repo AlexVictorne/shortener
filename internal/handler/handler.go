@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
 
+	"shortener/internal/model"
 	"shortener/internal/service"
 	"shortener/pkg/middleware"
 )
@@ -143,7 +144,72 @@ func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Get("/ping", h.PingHandler)
 	mux.Post("/", h.ShortenURLHandler)
 	mux.Post("/api/shorten", h.ShortenURLJSONHandler)
+	mux.Post("/api/shorten/batch", h.BatchShortenHandler)
 	mux.Get("/{id}", h.RedirectHandler)
 	mux.NotFound(h.NotFoundHandler)
 	mux.MethodNotAllowed(h.MethodNotAllowedHandler)
+}
+
+func (h *Handler) BatchShortenHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Content-Type") != "application/json" {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	var req []model.BatchRequestItem
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
+	if err := dec.Decode(&req); err != nil || len(req) == 0 {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	urls := make([]*model.ShortURL, 0, len(req))
+	resp := make([]model.BatchResponseItem, 0, len(req))
+	for _, item := range req {
+		if item.OriginalURL == "" || item.CorrelationID == "" {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		if err := h.service.ValidateURL(item.OriginalURL); err != nil {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		normalized, err := h.service.NormalizeURL(item.OriginalURL)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		}
+		existing, err := h.service.GetByOriginal(r.Context(), normalized)
+		if err == nil && existing != nil {
+			resp = append(resp, model.BatchResponseItem{
+				CorrelationID: item.CorrelationID,
+				ShortURL:      h.service.BuildShortURL(existing.ShortURL),
+			})
+			continue
+		}
+		shortID, err := h.service.GenerateID()
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		urls = append(urls, &model.ShortURL{
+			ShortURL:    shortID,
+			OriginalURL: normalized,
+		})
+		resp = append(resp, model.BatchResponseItem{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      h.service.BuildShortURL(shortID),
+		})
+	}
+	if len(urls) > 0 {
+		if err := h.service.BatchCreate(r.Context(), urls); err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Error().Err(err).Msg("failed to encode batch shorten response")
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
@@ -131,4 +132,55 @@ func ApplyMigrations(db *sql.DB, migrationsDir string, dsn string) error {
 		return nil
 	}
 	return err
+}
+
+func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) error {
+	if len(urls) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	valueStrings := make([]string, 0, len(urls))
+	valueArgs := make([]interface{}, 0, len(urls)*2)
+	for i, url := range urls {
+		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d)", i*2+1, i*2+2))
+		valueArgs = append(valueArgs, url.ShortURL, url.OriginalURL)
+	}
+	query := "INSERT INTO short_urls (short_url, original_url) VALUES " +
+		strings.Join(valueStrings, ",") +
+		" RETURNING uuid, short_url"
+	rows, err := tx.QueryContext(ctx, query, valueArgs...)
+	if err != nil {
+		tx.Rollback()
+		if isUniqueViolation(err) {
+			return fmt.Errorf("conflict: %w", ErrConflict)
+		}
+		return fmt.Errorf("batch create: %w", err)
+	}
+	defer rows.Close()
+	uuidMap := make(map[string]int)
+	for rows.Next() {
+		var uuid int
+		var short string
+		if err := rows.Scan(&uuid, &short); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("scan: %w", err)
+		}
+		uuidMap[short] = uuid
+	}
+	for _, url := range urls {
+		if id, ok := uuidMap[url.ShortURL]; ok {
+			url.UUID = id
+		}
+	}
+	if err := rows.Err(); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("rows: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
 }

@@ -308,3 +308,88 @@ func TestHandler_PingHandler(t *testing.T) {
 		assert.Equal(t, http.StatusInternalServerError, res.StatusCode)
 	})
 }
+
+func TestHandler_BatchShortenHandler(t *testing.T) {
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+	h := handler.NewHandler(svc)
+
+	tests := []struct {
+		name           string
+		method         string
+		contentType    string
+		body           string
+		wantStatus     int
+		wantInResponse string
+	}{
+		{
+			name:           "success batch",
+			method:         http.MethodPost,
+			contentType:    "application/json",
+			body:           `[{"correlation_id":"1","original_url":"https://ya.ru"},{"correlation_id":"2","original_url":"https://yandex.ru"}]`,
+			wantStatus:     http.StatusCreated,
+			wantInResponse: "short_url",
+		},
+		{
+			name:        "empty batch",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `[]`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "bad content type",
+			method:      http.MethodPost,
+			contentType: "text/plain",
+			body:        `[{"correlation_id":"1","original_url":"https://ya.ru"}]`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "missing correlation_id",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `[{"original_url":"https://ya.ru"}]`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "missing original_url",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `[{"correlation_id":"1"}]`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "invalid json",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `[`,
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "duplicate url in batch",
+			method:      http.MethodPost,
+			contentType: "application/json",
+			body:        `[{"correlation_id":"1","original_url":"https://ya.ru"},{"correlation_id":"2","original_url":"https://ya.ru"}]`,
+			wantStatus:  http.StatusCreated,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(tt.method, "/api/shorten/batch", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
+			w := httptest.NewRecorder()
+			h.BatchShortenHandler(w, req)
+			res := w.Result()
+			defer res.Body.Close()
+
+			assert.Equal(t, tt.wantStatus, res.StatusCode)
+
+			if tt.wantInResponse != "" && res.StatusCode == http.StatusCreated {
+				b, _ := io.ReadAll(res.Body)
+				assert.Contains(t, string(b), tt.wantInResponse)
+			}
+		})
+	}
+}

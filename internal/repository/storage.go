@@ -19,6 +19,7 @@ var (
 
 type Storage interface {
 	Create(ctx context.Context, url *model.ShortURL) error
+	BatchCreate(ctx context.Context, urls []*model.ShortURL) error
 	Get(ctx context.Context, shortURL string) (*model.ShortURL, error)
 	GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error)
 
@@ -191,6 +192,30 @@ func (s *MemStorage) Close() error {
 
 	if saveErr != nil {
 		return saveErr
+	}
+	return nil
+}
+
+func (s *MemStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, url := range urls {
+		if _, exists := s.urls[url.ShortURL]; exists {
+			return fmt.Errorf("ShortURL conflict: %w", ErrConflict)
+		}
+		if _, exists := s.index[url.OriginalURL]; exists {
+			return fmt.Errorf("OriginalURL conflict: %w", ErrConflict)
+		}
+	}
+
+	for _, url := range urls {
+		if url.UUID == 0 {
+			url.UUID = s.nextUUID
+			s.nextUUID++
+		}
+		s.urls[url.ShortURL] = url
+		s.index[url.OriginalURL] = url.ShortURL
 	}
 	return nil
 }

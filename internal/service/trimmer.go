@@ -158,3 +158,27 @@ func extractID(shortURL string) (string, error) {
 
 	return parts[len(parts)-1], nil
 }
+
+func (s *TrimmerService) BatchCreate(ctx context.Context, urls []*model.ShortURL) error {
+	return s.storage.BatchCreate(ctx, urls)
+}
+
+func (s *TrimmerService) BuildShortURL(id string) string {
+	return s.buildShortURL(id)
+}
+
+func (s *TrimmerService) ValidateURL(rawURL string) error {
+	return s.validateURL(rawURL)
+}
+
+func (s *TrimmerService) NormalizeURL(rawURL string) (string, error) {
+	return s.normalizeURL(rawURL)
+}
+
+func (s *TrimmerService) GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error) {
+	return s.storage.GetByOriginal(ctx, originalURL)
+}
+
+func (s *TrimmerService) GenerateID() (string, error) {
+	return s.generator.GenerateID()
+}
