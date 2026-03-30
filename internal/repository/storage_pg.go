@@ -5,7 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
@@ -24,6 +28,10 @@ func NewPgStorage(ctx context.Context, dsn string) (*PgStorage, error) {
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping db: %w", err)
+	}
+	if err := ApplyMigrations(db, "../../migrations", dsn); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrations: %w", err)
 	}
 	return &PgStorage{db: db}, nil
 }
@@ -92,4 +100,35 @@ func (s *PgStorage) Close() error {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func ApplyMigrations(db *sql.DB, migrationsDir string, dsn string) error {
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		return err
+	}
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://"+migrationsDir,
+		"postgres", driver,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Применяем миграции
+	err = m.Up()
+	if err == nil {
+		log.Println("[migrate] DB up successfully")
+		return nil
+	}
+	if err == migrate.ErrNoChange {
+		ver, dirty, verr := m.Version()
+		if verr != nil {
+			log.Printf("[migrate] DB actual, but version incorrect %v", verr)
+		} else {
+			log.Printf("[migrate] DB actual, current version: %d (dirty=%v)", ver, dirty)
+		}
+		return nil
+	}
+	return err
 }
