@@ -160,8 +160,47 @@ func extractID(shortURL string) (string, error) {
 	return parts[len(parts)-1], nil
 }
 
-func (s *TrimmerService) BatchCreate(ctx context.Context, urls []*model.ShortURL) error {
-	return s.storage.BatchCreate(ctx, urls)
+func (s *TrimmerService) BatchShorten(ctx context.Context, req []model.BatchRequestItem) ([]model.BatchResponseItem, error) {
+	urls := make([]*model.ShortURL, 0, len(req))
+	resp := make([]model.BatchResponseItem, 0, len(req))
+	for _, item := range req {
+		if item.OriginalURL == "" || item.CorrelationID == "" {
+			return nil, errors.New("empty original_url or correlation_id")
+		}
+		if err := s.ValidateURL(item.OriginalURL); err != nil {
+			return nil, err
+		}
+		normalized, err := s.NormalizeURL(item.OriginalURL)
+		if err != nil {
+			return nil, err
+		}
+		existing, err := s.GetByOriginal(ctx, normalized)
+		if err == nil && existing != nil {
+			resp = append(resp, model.BatchResponseItem{
+				CorrelationID: item.CorrelationID,
+				ShortURL:      s.BuildShortURL(existing.ShortURL),
+			})
+			continue
+		}
+		shortID, err := s.GenerateID()
+		if err != nil {
+			return nil, err
+		}
+		urls = append(urls, &model.ShortURL{
+			ShortURL:    shortID,
+			OriginalURL: normalized,
+		})
+		resp = append(resp, model.BatchResponseItem{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      s.BuildShortURL(shortID),
+		})
+	}
+	if len(urls) > 0 {
+		if err := s.storage.BatchCreate(ctx, urls); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
 }
 
 func (s *TrimmerService) BuildShortURL(id string) string {
