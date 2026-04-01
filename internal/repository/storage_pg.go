@@ -152,6 +152,8 @@ func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) err
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
+	defer tx.Rollback()
+
 	valueStrings := make([]string, 0, len(urls))
 	valueArgs := make([]interface{}, 0, len(urls)*2)
 	for i, url := range urls {
@@ -163,7 +165,6 @@ func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) err
 		" RETURNING uuid, short_url"
 	rows, err := tx.QueryContext(ctx, query, valueArgs...)
 	if err != nil {
-		tx.Rollback()
 		if isUniqueViolation(err) {
 			return fmt.Errorf("conflict: %w", ErrConflict)
 		}
@@ -175,7 +176,6 @@ func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) err
 		var uuid int
 		var short string
 		if err := rows.Scan(&uuid, &short); err != nil {
-			tx.Rollback()
 			return fmt.Errorf("scan: %w", err)
 		}
 		uuidMap[short] = uuid
@@ -186,7 +186,6 @@ func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) err
 		}
 	}
 	if err := rows.Err(); err != nil {
-		tx.Rollback()
 		return fmt.Errorf("rows: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
