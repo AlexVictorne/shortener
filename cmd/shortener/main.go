@@ -38,9 +38,23 @@ func main() {
 		log.Fatalf("ResultURL validation error: %v", err)
 	}
 
-	store, err := repository.NewMemStorageWithFile(cfg.FileStoragePath)
-	if err != nil {
-		log.Fatalf("Storage initialization error: %v", err)
+	var store repository.Storage
+	var pgStore *repository.PgStorage
+
+	if cfg.DatabaseDSN != "" {
+		pgStore, err = repository.NewPgStorage(context.Background(), cfg.DatabaseDSN)
+		if err != nil {
+			log.Fatalf("PgStorage initialization error: %v", err)
+		}
+		log.Println("Using PostgreSQL storage (PgStorage)")
+		store = pgStore
+	} else {
+		memStore, err := repository.NewMemStorageWithFile(cfg.FileStoragePath)
+		if err != nil {
+			log.Fatalf("Storage initialization error: %v", err)
+		}
+		log.Println("Using in-memory storage (MemStorage)")
+		store = memStore
 	}
 	defer store.Close()
 
@@ -49,6 +63,9 @@ func main() {
 	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
 
 	handler := handler.NewHandler(service)
+	if pgStore != nil {
+		handler.WithPinger(pgStore)
+	}
 
 	r := chi.NewRouter()
 

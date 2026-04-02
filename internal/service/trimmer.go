@@ -12,6 +12,8 @@ import (
 	"shortener/pkg/generator"
 )
 
+var ErrConflict = errors.New("conflict")
+
 type TrimmerService struct {
 	storage   repository.Storage
 	generator generator.IDGenerator
@@ -40,36 +42,24 @@ func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (strin
 		return "", fmt.Errorf("normalization failed %w", err)
 	}
 
-	existingURL, err := s.storage.GetByOriginal(ctx, normalizedURL)
-	if err == nil && existingURL != nil {
-		return s.buildShortURL(existingURL.ShortURL), nil
+	shortID, err := s.generator.GenerateID()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate ID: %w", err)
 	}
 
-	const maxAttempts = 10
-	for i := 0; i < maxAttempts; i++ {
-		shortID, err := s.generator.GenerateID()
-		if err != nil {
-			return "", fmt.Errorf("failed to generate ID: %w", err)
-		}
-
-		urlStored := &model.ShortURL{
-			ShortURL:    shortID,
-			OriginalURL: normalizedURL,
-		}
-
-		err = s.storage.Create(ctx, urlStored)
-		if err == nil {
-			return s.buildShortURL(shortID), nil
-		}
-
-		if errors.Is(err, repository.ErrConflict) {
-			continue
-		}
-
-		return "", fmt.Errorf("storage error: %w", err)
+	urlStored := &model.ShortURL{
+		ShortURL:    shortID,
+		OriginalURL: normalizedURL,
 	}
 
-	return "", errors.New("failed to generate unique ID: max attempts reached")
+	err = s.storage.Create(ctx, urlStored)
+	if err == nil {
+		return s.buildShortURL(urlStored.ShortURL), nil
+	}
+	if errors.Is(err, repository.ErrConflict) {
+		return s.buildShortURL(urlStored.ShortURL), ErrConflict
+	}
+	return "", fmt.Errorf("storage error: %w", err)
 }
 
 func (s *TrimmerService) checkIDExists(ctx context.Context, shortID string) (bool, error) {
@@ -157,4 +147,67 @@ func extractID(shortURL string) (string, error) {
 	}
 
 	return parts[len(parts)-1], nil
+}
+
+func (s *TrimmerService) BatchShorten(ctx context.Context, req []model.BatchRequestItem) ([]model.BatchResponseItem, error) {
+	urls := make([]*model.ShortURL, 0, len(req))
+	resp := make([]model.BatchResponseItem, 0, len(req))
+	for _, item := range req {
+		if item.OriginalURL == "" || item.CorrelationID == "" {
+			return nil, errors.New("empty original_url or correlation_id")
+		}
+		if err := s.ValidateURL(item.OriginalURL); err != nil {
+			return nil, err
+		}
+		normalized, err := s.NormalizeURL(item.OriginalURL)
+		if err != nil {
+			return nil, err
+		}
+		existing, err := s.GetByOriginal(ctx, normalized)
+		if err == nil && existing != nil {
+			resp = append(resp, model.BatchResponseItem{
+				CorrelationID: item.CorrelationID,
+				ShortURL:      s.BuildShortURL(existing.ShortURL),
+			})
+			continue
+		}
+		shortID, err := s.GenerateID()
+		if err != nil {
+			return nil, err
+		}
+		urls = append(urls, &model.ShortURL{
+			ShortURL:    shortID,
+			OriginalURL: normalized,
+		})
+		resp = append(resp, model.BatchResponseItem{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      s.BuildShortURL(shortID),
+		})
+	}
+	if len(urls) > 0 {
+		if err := s.storage.BatchCreate(ctx, urls); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+func (s *TrimmerService) BuildShortURL(id string) string {
+	return s.buildShortURL(id)
+}
+
+func (s *TrimmerService) ValidateURL(rawURL string) error {
+	return s.validateURL(rawURL)
+}
+
+func (s *TrimmerService) NormalizeURL(rawURL string) (string, error) {
+	return s.normalizeURL(rawURL)
+}
+
+func (s *TrimmerService) GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error) {
+	return s.storage.GetByOriginal(ctx, originalURL)
+}
+
+func (s *TrimmerService) GenerateID() (string, error) {
+	return s.generator.GenerateID()
 }

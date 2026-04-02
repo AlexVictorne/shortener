@@ -142,3 +142,79 @@ func TestTrimmerService_GetOriginalURL(t *testing.T) {
 		})
 	}
 }
+
+func TestTrimmerService_BatchShorten(t *testing.T) {
+	baseURL := "http://localhost:8080/"
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	service := service.NewTrimmerService(storage, gen, baseURL)
+
+	t.Run("success batch", func(t *testing.T) {
+		req := []model.BatchRequestItem{
+			{CorrelationID: "1", OriginalURL: "https://ya.ru"},
+			{CorrelationID: "2", OriginalURL: "https://google.com"},
+		}
+		resp, err := service.BatchShorten(context.Background(), req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(resp) != 2 {
+			t.Fatalf("expected 2 responses, got %d", len(resp))
+		}
+		for i, r := range resp {
+			if r.CorrelationID != req[i].CorrelationID {
+				t.Errorf("correlation id mismatch: got %s, want %s", r.CorrelationID, req[i].CorrelationID)
+			}
+			if r.ShortURL == "" {
+				t.Errorf("empty short url for item %d", i)
+			}
+		}
+	})
+
+	t.Run("duplicate url", func(t *testing.T) {
+		req := []model.BatchRequestItem{
+			{CorrelationID: "1", OriginalURL: "https://ya.ru"},
+			{CorrelationID: "2", OriginalURL: "https://ya.ru"},
+		}
+		resp, err := service.BatchShorten(context.Background(), req)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(resp) != 2 {
+			t.Fatalf("expected 2 responses, got %d", len(resp))
+		}
+		if resp[0].ShortURL != resp[1].ShortURL {
+			t.Errorf("expected same short url for duplicate original, got %s and %s", resp[0].ShortURL, resp[1].ShortURL)
+		}
+	})
+
+	t.Run("invalid url", func(t *testing.T) {
+		req := []model.BatchRequestItem{
+			{CorrelationID: "1", OriginalURL: "not-a-url"},
+		}
+		_, err := service.BatchShorten(context.Background(), req)
+		if err == nil {
+			t.Fatal("expected error for invalid url, got nil")
+		}
+	})
+
+	t.Run("empty correlation id", func(t *testing.T) {
+		req := []model.BatchRequestItem{
+			{CorrelationID: "", OriginalURL: "https://ya.ru"},
+		}
+		_, err := service.BatchShorten(context.Background(), req)
+		if err == nil {
+			t.Fatal("expected error for empty correlation id, got nil")
+		}
+	})
+
+	t.Run("empty original url", func(t *testing.T) {
+		req := []model.BatchRequestItem{
+			{CorrelationID: "1", OriginalURL: ""},
+		}
+		_, err := service.BatchShorten(context.Background(), req)
+		if err == nil {
+			t.Fatal("expected error for empty original url, got nil")
+		}
+	})
+}
