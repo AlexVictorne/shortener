@@ -30,7 +30,7 @@ func NewPgStorage(ctx context.Context, dsn string) (*PgStorage, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
-	if err := ApplyMigrations(db, "migrations", dsn); err != nil {
+	if err := ApplyMigrations(db, "migrations"); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrations: %w", err)
 	}
@@ -41,26 +41,22 @@ func (s *PgStorage) Create(ctx context.Context, url *model.ShortURL) error {
 	row := s.db.QueryRowContext(ctx, `
 		INSERT INTO short_urls (short_url, original_url)
 		VALUES ($1, $2)
-		ON CONFLICT (original_url) DO NOTHING
-		RETURNING uuid
+		ON CONFLICT (original_url) DO UPDATE SET original_url = EXCLUDED.original_url
+		RETURNING uuid, short_url
 	`, url.ShortURL, url.OriginalURL)
 
-	err := row.Scan(&url.UUID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			existing, getErr := s.GetByOriginal(ctx, url.OriginalURL)
-			if getErr != nil {
-				return fmt.Errorf("conflict lookup: %w", getErr)
-			}
-			url.UUID = existing.UUID
-			url.ShortURL = existing.ShortURL
-			return fmt.Errorf("conflict: %w", ErrConflict)
-		}
-		if isUniqueViolation(err) {
-			return fmt.Errorf("conflict: %w", ErrConflict)
-		}
+	var existing model.ShortURL
+	if err := row.Scan(&existing.UUID, &existing.ShortURL); err != nil {
 		return fmt.Errorf("create: %w", err)
 	}
+
+	if existing.ShortURL != url.ShortURL {
+		url.UUID = existing.UUID
+		url.ShortURL = existing.ShortURL
+		return fmt.Errorf("conflict: %w", ErrConflict)
+	}
+
+	url.UUID = existing.UUID
 	return nil
 }
 
@@ -113,7 +109,7 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
-func ApplyMigrations(db *sql.DB, migrationsDir string, dsn string) error {
+func ApplyMigrations(db *sql.DB, migrationsDir string) error {
 	driver, err := postgres.WithInstance(db, &postgres.Config{})
 	if err != nil {
 		return err
@@ -132,7 +128,7 @@ func ApplyMigrations(db *sql.DB, migrationsDir string, dsn string) error {
 		log.Println("[migrate] DB up successfully")
 		return nil
 	}
-	if err == migrate.ErrNoChange {
+	if errors.Is(err, migrate.ErrNoChange) {
 		ver, dirty, verr := m.Version()
 		if verr != nil {
 			log.Printf("[migrate] DB actual, but version incorrect %v", verr)
@@ -180,13 +176,13 @@ func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) err
 		}
 		uuidMap[short] = uuid
 	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("rows: %w", err)
+	}
 	for _, url := range urls {
 		if id, ok := uuidMap[url.ShortURL]; ok {
 			url.UUID = id
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("rows: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit: %w", err)

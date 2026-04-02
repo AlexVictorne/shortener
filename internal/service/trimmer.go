@@ -42,35 +42,24 @@ func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (strin
 		return "", fmt.Errorf("normalization failed %w", err)
 	}
 
-	existingURL, err := s.storage.GetByOriginal(ctx, normalizedURL)
-	if err == nil && existingURL != nil {
-		return s.buildShortURL(existingURL.ShortURL), ErrConflict
+	shortID, err := s.generator.GenerateID()
+	if err != nil {
+		return "", fmt.Errorf("failed to generate ID: %w", err)
 	}
 
-	const maxAttempts = 10
-	for i := 0; i < maxAttempts; i++ {
-		shortID, err := s.generator.GenerateID()
-		if err != nil {
-			return "", fmt.Errorf("failed to generate ID: %w", err)
-		}
-
-		urlStored := &model.ShortURL{
-			ShortURL:    shortID,
-			OriginalURL: normalizedURL,
-		}
-
-		err = s.storage.Create(ctx, urlStored)
-		if err == nil {
-			return s.buildShortURL(shortID), nil
-		}
-
-		if errors.Is(err, repository.ErrConflict) {
-			continue
-		}
-		return "", fmt.Errorf("storage error: %w", err)
+	urlStored := &model.ShortURL{
+		ShortURL:    shortID,
+		OriginalURL: normalizedURL,
 	}
 
-	return "", ErrConflict
+	err = s.storage.Create(ctx, urlStored)
+	if err == nil {
+		return s.buildShortURL(urlStored.ShortURL), nil
+	}
+	if errors.Is(err, repository.ErrConflict) {
+		return s.buildShortURL(urlStored.ShortURL), ErrConflict
+	}
+	return "", fmt.Errorf("storage error: %w", err)
 }
 
 func (s *TrimmerService) checkIDExists(ctx context.Context, shortID string) (bool, error) {
