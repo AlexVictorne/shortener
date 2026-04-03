@@ -25,6 +25,7 @@ type Storage interface {
 	GetByUserID(ctx context.Context, userID string) ([]*model.ShortURL, error)
 
 	Close() error
+	BatchMarkDeleted(ctx context.Context, userID string, shortURLs []string) error
 }
 
 type MemStorage struct {
@@ -78,6 +79,18 @@ func (s *MemStorage) LoadFromFile(filePath string) error {
 		return err
 	}
 	s.ImportAll(urls)
+	return nil
+}
+
+func (s *MemStorage) BatchMarkDeleted(ctx context.Context, userID string, shortURLs []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, short := range shortURLs {
+		url, ok := s.urls[short]
+		if ok && url.UserID == userID {
+			url.DeletedFlag = true
+		}
+	}
 	return nil
 }
 

@@ -148,6 +148,10 @@ func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 	// load original
 	originalURL, err := h.service.GetOriginalURL(r.Context(), id)
 	if err != nil {
+		if errors.Is(err, service.ErrURLDeleted) {
+			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
+			return
+		}
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
@@ -175,6 +179,22 @@ func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (h *Handler) DeleteUserURLsHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	var ids []string
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
+	if err := dec.Decode(&ids); err != nil || len(ids) == 0 {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	_ = h.service.MarkURLsDeleted(r.Context(), userID, ids)
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Use(middleware.RequestResponseLogger)
 	mux.Use(middleware.GzipMiddleware)
@@ -185,6 +205,7 @@ func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Post("/api/shorten", h.ShortenURLJSONHandler)
 	mux.Post("/api/shorten/batch", h.BatchShortenHandler)
 	mux.Get("/api/user/urls", h.GetUserURLsHandler)
+	mux.Delete("/api/user/urls", h.DeleteUserURLsHandler)
 	mux.Get("/{id}", h.RedirectHandler)
 	mux.NotFound(h.NotFoundHandler)
 	mux.MethodNotAllowed(h.MethodNotAllowedHandler)

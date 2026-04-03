@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -461,4 +462,95 @@ func TestHandler_GetUserURLsHandler(t *testing.T) {
 	_ = json.Unmarshal(b, &urls)
 	assert.GreaterOrEqual(t, len(urls), 1)
 	assert.Contains(t, urls[0].OriginalURL, "https://ya.ru")
+}
+
+func TestHandler_DeleteUserURLsHandler(t *testing.T) {
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+	h := newTestHandler(svc)
+
+	reqCreate := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url": "https://yandex.ru"}`))
+	reqCreate.Header.Set("Content-Type", "application/json")
+	rwCreate := httptest.NewRecorder()
+	wrapWithAuth(h.ShortenURLJSONHandler).ServeHTTP(rwCreate, reqCreate)
+	respCreate := rwCreate.Result()
+	defer respCreate.Body.Close()
+	assert.Equal(t, http.StatusCreated, respCreate.StatusCode)
+
+	var authToken string
+	for _, c := range respCreate.Cookies() {
+		if c.Name == "auth_token" {
+			authToken = c.Value
+			break
+		}
+	}
+	if authToken == "" {
+		t.Fatal("auth_token cookie not set after POST /api/shorten")
+	}
+
+	var respData struct {
+		Result string `json:"result"`
+	}
+	b, _ := io.ReadAll(respCreate.Body)
+	err := json.Unmarshal(b, &respData)
+	require.NoError(t, err)
+	shortURL := respData.Result
+	parts := strings.Split(shortURL, "/")
+	id := parts[len(parts)-1]
+
+	body := `["` + id + `"]`
+	req := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "auth_token", Value: authToken})
+	rw := httptest.NewRecorder()
+	wrapWithAuth(h.DeleteUserURLsHandler).ServeHTTP(rw, req)
+	resp := rw.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	var deleted bool
+	for i := 0; i < 1000; i++ {
+		u, _ := storage.Get(context.Background(), id)
+		if u != nil && u.DeletedFlag {
+			deleted = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !deleted {
+		t.Fatal("DeletedFlag was not set after waiting")
+	}
+
+	reqGone := httptest.NewRequest(http.MethodGet, "/"+id, nil)
+	rwGone := httptest.NewRecorder()
+	h.RedirectHandler(rwGone, reqGone)
+	respGone := rwGone.Result()
+	defer respGone.Body.Close()
+	assert.Equal(t, http.StatusGone, respGone.StatusCode)
+
+	req2 := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader(body))
+	rw2 := httptest.NewRecorder()
+	h.DeleteUserURLsHandler(rw2, req2)
+	resp2 := rw2.Result()
+	defer resp2.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp2.StatusCode)
+
+	req3 := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader("{"))
+	rw3 := httptest.NewRecorder()
+	wrapWithAuth(h.DeleteUserURLsHandler).ServeHTTP(rw3, req3)
+	resp3 := rw3.Result()
+	defer resp3.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp3.StatusCode)
+
+	url2 := &model.ShortURL{ShortURL: "other123", OriginalURL: "https://ya.ru", UserID: "user2"}
+	_ = storage.Create(context.Background(), url2)
+	bodyOther := `["other123"]`
+	req4 := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader(bodyOther))
+	rw4 := httptest.NewRecorder()
+	wrapWithAuth(h.DeleteUserURLsHandler).ServeHTTP(rw4, req4)
+	resp4 := rw4.Result()
+	defer resp4.Body.Close()
+	assert.Equal(t, http.StatusAccepted, resp4.StatusCode)
+	u2, _ := storage.Get(context.Background(), "other123")
+	assert.False(t, u2.DeletedFlag)
 }

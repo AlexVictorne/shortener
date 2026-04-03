@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 
 	"shortener/internal/model"
 	"shortener/internal/repository"
@@ -83,6 +84,8 @@ func (s *TrimmerService) checkIDExists(ctx context.Context, shortID string) (boo
 	return true, nil
 }
 
+var ErrURLDeleted = errors.New("url deleted")
+
 func (s *TrimmerService) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
 	shortID, err := extractID(shortURL)
 	if err != nil {
@@ -93,7 +96,9 @@ func (s *TrimmerService) GetOriginalURL(ctx context.Context, shortURL string) (s
 	if err != nil {
 		return "", fmt.Errorf("storage error: %w", err)
 	}
-
+	if urlStored.DeletedFlag {
+		return "", ErrURLDeleted
+	}
 	return urlStored.OriginalURL, nil
 }
 
@@ -245,4 +250,40 @@ func (s *TrimmerService) GetURLsByUser(ctx context.Context, userID string) ([]mo
 		})
 	}
 	return resp, nil
+}
+
+func (s *TrimmerService) MarkURLsDeleted(ctx context.Context, userID string, shortURLs []string) error {
+	const chunkSize = 100
+	if len(shortURLs) == 0 {
+		return nil
+	}
+	go func() {
+		// Channel: для передачи чанков shortURLs между FanOut и FanIn
+		chunkCh := make(chan []string)
+
+		// FanOut: делим на чанки и отправляем в канал
+		go func() {
+			for i := 0; i < len(shortURLs); i += chunkSize {
+				end := i + chunkSize
+				if end > len(shortURLs) {
+					end = len(shortURLs)
+				}
+				chunk := shortURLs[i:end]
+				chunkCh <- chunk
+			}
+			close(chunkCh)
+		}()
+
+		// FanIn: читаем чанки и параллельно обновляем
+		var wg sync.WaitGroup
+		for chunk := range chunkCh {
+			wg.Add(1)
+			go func(c []string) {
+				defer wg.Done()
+				_ = s.storage.BatchMarkDeleted(context.Background(), userID, c)
+			}(chunk)
+		}
+		wg.Wait()
+	}()
+	return nil
 }

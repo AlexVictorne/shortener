@@ -62,13 +62,13 @@ func (s *PgStorage) Create(ctx context.Context, url *model.ShortURL) error {
 
 func (s *PgStorage) Get(ctx context.Context, shortURL string) (*model.ShortURL, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT uuid, short_url, original_url
-		FROM short_urls
-		WHERE short_url = $1
-	`, shortURL)
+	       SELECT uuid, short_url, original_url, user_id, is_deleted
+	       FROM short_urls
+	       WHERE short_url = $1
+       `, shortURL)
 
 	var u model.ShortURL
-	if err := row.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL); err != nil {
+	if err := row.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL, &u.UserID, &u.DeletedFlag); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("not found: %w", ErrNotFound)
 		}
@@ -80,13 +80,13 @@ func (s *PgStorage) Get(ctx context.Context, shortURL string) (*model.ShortURL, 
 
 func (s *PgStorage) GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT uuid, short_url, original_url
-		FROM short_urls
-		WHERE original_url = $1
-	`, originalURL)
+	       SELECT uuid, short_url, original_url, user_id, is_deleted
+	       FROM short_urls
+	       WHERE original_url = $1
+       `, originalURL)
 
 	var u model.ShortURL
-	if err := row.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL); err != nil {
+	if err := row.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL, &u.UserID, &u.DeletedFlag); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("not found: %w", ErrNotFound)
 		}
@@ -98,10 +98,10 @@ func (s *PgStorage) GetByOriginal(ctx context.Context, originalURL string) (*mod
 
 func (s *PgStorage) GetByUserID(ctx context.Context, userID string) ([]*model.ShortURL, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT uuid, short_url, original_url, user_id
-		FROM short_urls
-		WHERE user_id = $1
-	`, userID)
+	       SELECT uuid, short_url, original_url, user_id, is_deleted
+	       FROM short_urls
+	       WHERE user_id = $1
+       `, userID)
 	if err != nil {
 		return nil, fmt.Errorf("get by user_id: %w", err)
 	}
@@ -109,7 +109,7 @@ func (s *PgStorage) GetByUserID(ctx context.Context, userID string) ([]*model.Sh
 	var result []*model.ShortURL
 	for rows.Next() {
 		var u model.ShortURL
-		if err := rows.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL, &u.UserID); err != nil {
+		if err := rows.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL, &u.UserID, &u.DeletedFlag); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		result = append(result, &u)
@@ -118,6 +118,26 @@ func (s *PgStorage) GetByUserID(ctx context.Context, userID string) ([]*model.Sh
 		return nil, fmt.Errorf("rows: %w", err)
 	}
 	return result, nil
+}
+
+func (s *PgStorage) BatchMarkDeleted(ctx context.Context, userID string, shortURLs []string) error {
+	if len(shortURLs) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, len(shortURLs))
+	args := make([]interface{}, 0, len(shortURLs)+1)
+	args = append(args, userID)
+	for i, url := range shortURLs {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, url)
+	}
+	query := fmt.Sprintf(`UPDATE short_urls SET is_deleted = TRUE WHERE user_id = $1 AND short_url IN (%s)`, strings.Join(placeholders, ","))
+	_, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("batch mark deleted: %w", err)
+	}
+	return nil
 }
 
 func (s *PgStorage) Ping(ctx context.Context) error {
