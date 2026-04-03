@@ -62,7 +62,7 @@ func main() {
 
 	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
 
-	handler := handler.NewHandler(service)
+	handler := handler.NewHandler(service).WithAuthSecret(cfg.AuthSecret)
 	if pgStore != nil {
 		handler.WithPinger(pgStore)
 	}

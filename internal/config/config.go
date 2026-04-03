@@ -10,6 +10,7 @@ type Config struct {
 	ResultURL       string
 	FileStoragePath string
 	DatabaseDSN     string
+	AuthSecret      string
 }
 
 func LoadConfig() *Config {
@@ -24,21 +25,26 @@ func LoadConfig() *Config {
 	envNameFileStorage := "FILE_STORAGE_PATH"
 	flagNameDatabaseDSN := "d"
 	envNameDatabaseDSN := "DATABASE_DSN"
+	flagNameAuthSecret := "s"
+	envNameAuthSecret := "AUTH_SECRET"
 
 	var serverURL string
 	var resultURL string
 	var fileStoragePath string
 	var databaseDSN string
+	var authSecret string
 
 	envServerURL := os.Getenv(envNameServerURL)
 	envResultURL := os.Getenv(envNameBaseURL)
 	envFileStorage := os.Getenv(envNameFileStorage)
 	envDatabaseDSN := os.Getenv(envNameDatabaseDSN)
+	envAuthSecret := os.Getenv(envNameAuthSecret)
 
 	flagServerURL := flag.String(flagNameServerURL, "", "server base url")
 	flagResultURL := flag.String(flagNameBaseURL, "", "server result url")
 	flagFileStorage := flag.String(flagNameFileStorage, "", "file storage path")
 	flagDatabaseDSN := flag.String(flagNameDatabaseDSN, "", "database connection DSN")
+	flagAuthSecret := flag.String(flagNameAuthSecret, "", "auth secret for cookies")
 	flag.Parse()
 
 	// Приоритет env > flag > default
@@ -72,10 +78,19 @@ func LoadConfig() *Config {
 		databaseDSN = *flagDatabaseDSN
 	}
 
+	if envAuthSecret != "" {
+		authSecret = envAuthSecret
+	} else if *flagAuthSecret != "" {
+		authSecret = *flagAuthSecret
+	} else {
+		authSecret = "dev_secret"
+	}
+
 	return &Config{
 		BaseURL:         serverURL,
 		ResultURL:       resultURL,
 		FileStoragePath: fileStoragePath,
 		DatabaseDSN:     databaseDSN,
+		AuthSecret:      authSecret,
 	}
 }

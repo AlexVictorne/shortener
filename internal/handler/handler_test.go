@@ -2,6 +2,7 @@ package handler_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,16 +14,18 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"shortener/internal/handler"
+	"shortener/internal/model"
 	"shortener/internal/repository"
 	"shortener/internal/service"
 	"shortener/pkg/generator"
+	"shortener/pkg/middleware"
 )
 
 func TestHandler_ShortenURLJSONHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := newTestHandler(svc)
 
 	tests := []struct {
 		name            string
@@ -70,7 +73,7 @@ func TestHandler_ShortenURLJSONHandler(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
 			w := httptest.NewRecorder()
-			h.ShortenURLJSONHandler(w, req)
+			wrapWithAuth(h.ShortenURLJSONHandler).ServeHTTP(w, req)
 			res := w.Result()
 			defer res.Body.Close()
 
@@ -91,7 +94,7 @@ func TestHandler_ShortenURLHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := newTestHandler(svc)
 
 	tests := []struct {
 		name           string
@@ -130,7 +133,7 @@ func TestHandler_ShortenURLHandler(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
 			w := httptest.NewRecorder()
-			h.ShortenURLHandler(w, req)
+			wrapWithAuth(h.ShortenURLHandler).ServeHTTP(w, req)
 			res := w.Result()
 			defer res.Body.Close()
 
@@ -152,7 +155,8 @@ func TestHandler_RedirectHandler(t *testing.T) {
 	h := handler.NewHandler(svc)
 
 	// Сначала сохраним URL
-	shortURL, _ := svc.TrimURL(context.TODO(), "https://ya.ru")
+	ctx := context.WithValue(context.TODO(), "userID", "test-user")
+	shortURL, _ := svc.TrimURL(ctx, "https://ya.ru")
 	id := strings.TrimPrefix(shortURL, "http://localhost:8080/")
 
 	tests := []struct {
@@ -313,7 +317,7 @@ func TestHandler_BatchShortenHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := newTestHandler(svc)
 
 	tests := []struct {
 		name           string
@@ -380,7 +384,7 @@ func TestHandler_BatchShortenHandler(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/api/shorten/batch", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
 			w := httptest.NewRecorder()
-			h.BatchShortenHandler(w, req)
+			wrapWithAuth(h.BatchShortenHandler).ServeHTTP(w, req)
 			res := w.Result()
 			defer res.Body.Close()
 
@@ -392,4 +396,65 @@ func TestHandler_BatchShortenHandler(t *testing.T) {
 			}
 		})
 	}
+}
+
+const testSecret = "test-secret"
+
+func newTestHandler(svc *service.TrimmerService) *handler.Handler {
+	return handler.NewHandler(svc).WithAuthSecret(testSecret)
+}
+
+func wrapWithAuth(h http.HandlerFunc) http.Handler {
+	return middleware.AuthMiddleware(testSecret)(h)
+}
+
+func TestHandler_GetUserURLsHandler(t *testing.T) {
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+	h := newTestHandler(svc)
+
+	req := httptest.NewRequest("GET", "/api/user/urls", nil)
+	rw := httptest.NewRecorder()
+	h.GetUserURLsHandler(rw, req)
+	resp := rw.Result()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	req2 := httptest.NewRequest("GET", "/api/user/urls", nil)
+	rw2 := httptest.NewRecorder()
+	wrapWithAuth(h.GetUserURLsHandler).ServeHTTP(rw2, req2)
+	resp2 := rw2.Result()
+	assert.Equal(t, http.StatusNoContent, resp2.StatusCode)
+
+	req3 := httptest.NewRequest("POST", "/api/shorten", strings.NewReader("https://ya.ru"))
+	req3.Header.Set("Content-Type", "text/plain")
+	rw3 := httptest.NewRecorder()
+	wrapWithAuth(h.ShortenURLHandler).ServeHTTP(rw3, req3)
+	resp3 := rw3.Result()
+	assert.Equal(t, http.StatusCreated, resp3.StatusCode)
+
+	// Получаем auth_token из Set-Cookie
+	var authToken string
+	for _, c := range resp3.Cookies() {
+		if c.Name == "auth_token" {
+			authToken = c.Value
+			break
+		}
+	}
+	if authToken == "" {
+		t.Fatal("auth_token cookie not set after POST /api/shorten")
+	}
+
+	req4 := httptest.NewRequest("GET", "/api/user/urls", nil)
+	req4.AddCookie(&http.Cookie{Name: "auth_token", Value: authToken})
+	rw4 := httptest.NewRecorder()
+	wrapWithAuth(h.GetUserURLsHandler).ServeHTTP(rw4, req4)
+	resp4 := rw4.Result()
+	assert.Equal(t, http.StatusOK, resp4.StatusCode)
+	assert.Equal(t, "application/json", resp4.Header.Get("Content-Type"))
+	b, _ := io.ReadAll(resp4.Body)
+	var urls []model.UserURLResponse
+	_ = json.Unmarshal(b, &urls)
+	assert.GreaterOrEqual(t, len(urls), 1)
+	assert.Contains(t, urls[0].OriginalURL, "https://ya.ru")
 }

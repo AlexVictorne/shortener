@@ -20,14 +20,20 @@ type Pinger interface {
 }
 
 type Handler struct {
-	service *service.TrimmerService
-	pinger  Pinger
+	service    *service.TrimmerService
+	pinger     Pinger
+	authSecret string
 }
 
 func NewHandler(service *service.TrimmerService) *Handler {
 	return &Handler{
 		service: service,
 	}
+}
+
+func (h *Handler) WithAuthSecret(secret string) *Handler {
+	h.authSecret = secret
+	return h
 }
 
 func (h *Handler) WithPinger(p Pinger) *Handler {
@@ -105,6 +111,26 @@ func (h *Handler) ShortenURLJSONHandler(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (h *Handler) GetUserURLsHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	urls, err := h.service.GetURLsByUser(r.Context(), userID)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	if len(urls) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(urls)
+}
+
 func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 	// extract id
 	var id string
@@ -152,11 +178,13 @@ func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Use(middleware.RequestResponseLogger)
 	mux.Use(middleware.GzipMiddleware)
+	mux.Use(middleware.AuthMiddleware(h.authSecret))
 
 	mux.Get("/ping", h.PingHandler)
 	mux.Post("/", h.ShortenURLHandler)
 	mux.Post("/api/shorten", h.ShortenURLJSONHandler)
 	mux.Post("/api/shorten/batch", h.BatchShortenHandler)
+	mux.Get("/api/user/urls", h.GetUserURLsHandler)
 	mux.Get("/{id}", h.RedirectHandler)
 	mux.NotFound(h.NotFoundHandler)
 	mux.MethodNotAllowed(h.MethodNotAllowedHandler)

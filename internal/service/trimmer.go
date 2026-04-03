@@ -47,9 +47,17 @@ func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (strin
 		return "", fmt.Errorf("failed to generate ID: %w", err)
 	}
 
+	var userID string
+	if v := ctx.Value("userID"); v != nil {
+		if s, ok := v.(string); ok {
+			userID = s
+		}
+	}
+
 	urlStored := &model.ShortURL{
 		ShortURL:    shortID,
 		OriginalURL: normalizedURL,
+		UserID:      userID,
 	}
 
 	err = s.storage.Create(ctx, urlStored)
@@ -150,6 +158,13 @@ func extractID(shortURL string) (string, error) {
 }
 
 func (s *TrimmerService) BatchShorten(ctx context.Context, req []model.BatchRequestItem) ([]model.BatchResponseItem, error) {
+	var userID string
+	if v := ctx.Value("userID"); v != nil {
+		if s, ok := v.(string); ok {
+			userID = s
+		}
+	}
+
 	urls := make([]*model.ShortURL, 0, len(req))
 	resp := make([]model.BatchResponseItem, 0, len(req))
 	for _, item := range req {
@@ -178,6 +193,7 @@ func (s *TrimmerService) BatchShorten(ctx context.Context, req []model.BatchRequ
 		urls = append(urls, &model.ShortURL{
 			ShortURL:    shortID,
 			OriginalURL: normalized,
+			UserID:      userID,
 		})
 		resp = append(resp, model.BatchResponseItem{
 			CorrelationID: item.CorrelationID,
@@ -210,4 +226,22 @@ func (s *TrimmerService) GetByOriginal(ctx context.Context, originalURL string) 
 
 func (s *TrimmerService) GenerateID() (string, error) {
 	return s.generator.GenerateID()
+}
+
+func (s *TrimmerService) GetURLsByUser(ctx context.Context, userID string) ([]model.UserURLResponse, error) {
+	urls, err := s.storage.GetByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(urls) == 0 {
+		return nil, nil
+	}
+	resp := make([]model.UserURLResponse, 0, len(urls))
+	for _, u := range urls {
+		resp = append(resp, model.UserURLResponse{
+			ShortURL:    s.buildShortURL(u.ShortURL),
+			OriginalURL: u.OriginalURL,
+		})
+	}
+	return resp, nil
 }

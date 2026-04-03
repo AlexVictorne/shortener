@@ -39,11 +39,11 @@ func NewPgStorage(ctx context.Context, dsn string) (*PgStorage, error) {
 
 func (s *PgStorage) Create(ctx context.Context, url *model.ShortURL) error {
 	row := s.db.QueryRowContext(ctx, `
-		INSERT INTO short_urls (short_url, original_url)
-		VALUES ($1, $2)
+		INSERT INTO short_urls (short_url, original_url, user_id)
+		VALUES ($1, $2, $3)
 		ON CONFLICT (original_url) DO UPDATE SET original_url = EXCLUDED.original_url
 		RETURNING uuid, short_url
-	`, url.ShortURL, url.OriginalURL)
+	`, url.ShortURL, url.OriginalURL, url.UserID)
 
 	var existing model.ShortURL
 	if err := row.Scan(&existing.UUID, &existing.ShortURL); err != nil {
@@ -94,6 +94,30 @@ func (s *PgStorage) GetByOriginal(ctx context.Context, originalURL string) (*mod
 	}
 
 	return &u, nil
+}
+
+func (s *PgStorage) GetByUserID(ctx context.Context, userID string) ([]*model.ShortURL, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT uuid, short_url, original_url, user_id
+		FROM short_urls
+		WHERE user_id = $1
+	`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get by user_id: %w", err)
+	}
+	defer rows.Close()
+	var result []*model.ShortURL
+	for rows.Next() {
+		var u model.ShortURL
+		if err := rows.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL, &u.UserID); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		result = append(result, &u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows: %w", err)
+	}
+	return result, nil
 }
 
 func (s *PgStorage) Ping(ctx context.Context) error {
@@ -151,12 +175,12 @@ func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) err
 	defer tx.Rollback()
 
 	valueStrings := make([]string, 0, len(urls))
-	valueArgs := make([]interface{}, 0, len(urls)*2)
+	valueArgs := make([]interface{}, 0, len(urls)*3)
 	for i, url := range urls {
-		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d)", i*2+1, i*2+2))
-		valueArgs = append(valueArgs, url.ShortURL, url.OriginalURL)
+		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3))
+		valueArgs = append(valueArgs, url.ShortURL, url.OriginalURL, url.UserID)
 	}
-	query := "INSERT INTO short_urls (short_url, original_url) VALUES " +
+	query := "INSERT INTO short_urls (short_url, original_url, user_id) VALUES " +
 		strings.Join(valueStrings, ",") +
 		" RETURNING uuid, short_url"
 	rows, err := tx.QueryContext(ctx, query, valueArgs...)
