@@ -155,7 +155,7 @@ func TestHandler_RedirectHandler(t *testing.T) {
 	h := handler.NewHandler(svc)
 
 	// Сначала сохраним URL
-	ctx := context.WithValue(context.TODO(), "userID", "test-user")
+	ctx := context.WithValue(context.TODO(), middleware.UserIDKey, "test-user")
 	shortURL, _ := svc.TrimURL(ctx, "https://ya.ru")
 	id := strings.TrimPrefix(shortURL, "http://localhost:8080/")
 
@@ -418,12 +418,14 @@ func TestHandler_GetUserURLsHandler(t *testing.T) {
 	rw := httptest.NewRecorder()
 	h.GetUserURLsHandler(rw, req)
 	resp := rw.Result()
+	defer resp.Body.Close()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
 	req2 := httptest.NewRequest("GET", "/api/user/urls", nil)
 	rw2 := httptest.NewRecorder()
 	wrapWithAuth(h.GetUserURLsHandler).ServeHTTP(rw2, req2)
 	resp2 := rw2.Result()
+	defer resp2.Body.Close()
 	assert.Equal(t, http.StatusNoContent, resp2.StatusCode)
 
 	req3 := httptest.NewRequest("POST", "/api/shorten", strings.NewReader("https://ya.ru"))
@@ -431,6 +433,7 @@ func TestHandler_GetUserURLsHandler(t *testing.T) {
 	rw3 := httptest.NewRecorder()
 	wrapWithAuth(h.ShortenURLHandler).ServeHTTP(rw3, req3)
 	resp3 := rw3.Result()
+	defer resp3.Body.Close()
 	assert.Equal(t, http.StatusCreated, resp3.StatusCode)
 
 	// Получаем auth_token из Set-Cookie
@@ -450,6 +453,7 @@ func TestHandler_GetUserURLsHandler(t *testing.T) {
 	rw4 := httptest.NewRecorder()
 	wrapWithAuth(h.GetUserURLsHandler).ServeHTTP(rw4, req4)
 	resp4 := rw4.Result()
+	defer resp4.Body.Close()
 	assert.Equal(t, http.StatusOK, resp4.StatusCode)
 	assert.Equal(t, "application/json", resp4.Header.Get("Content-Type"))
 	b, _ := io.ReadAll(resp4.Body)

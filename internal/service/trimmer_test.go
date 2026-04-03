@@ -6,6 +6,7 @@ import (
 	"shortener/internal/repository"
 	"shortener/internal/service"
 	"shortener/pkg/generator"
+	"shortener/pkg/middleware"
 	"testing"
 )
 
@@ -56,7 +57,7 @@ func TestTrimmerService_TrimURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := service.NewTrimmerService(tt.storage, tt.generator, tt.baseURL)
-			ctx := context.WithValue(context.Background(), "userID", "test-user")
+			ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
 			got, gotErr := s.TrimURL(ctx, tt.originalURL)
 			if gotErr != nil {
 				if !tt.wantErr {
@@ -155,7 +156,7 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 			{CorrelationID: "1", OriginalURL: "https://ya.ru"},
 			{CorrelationID: "2", OriginalURL: "https://google.com"},
 		}
-		ctx := context.WithValue(context.Background(), "userID", "test-user")
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
 		resp, err := service.BatchShorten(ctx, req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -178,7 +179,7 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 			{CorrelationID: "1", OriginalURL: "https://ya.ru"},
 			{CorrelationID: "2", OriginalURL: "https://ya.ru"},
 		}
-		ctx := context.WithValue(context.Background(), "userID", "test-user")
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
 		resp, err := service.BatchShorten(ctx, req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -195,7 +196,7 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 		req := []model.BatchRequestItem{
 			{CorrelationID: "1", OriginalURL: "not-a-url"},
 		}
-		ctx := context.WithValue(context.Background(), "userID", "test-user")
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
 		_, err := service.BatchShorten(ctx, req)
 		if err == nil {
 			t.Fatal("expected error for invalid url, got nil")
@@ -206,7 +207,7 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 		req := []model.BatchRequestItem{
 			{CorrelationID: "", OriginalURL: "https://ya.ru"},
 		}
-		ctx := context.WithValue(context.Background(), "userID", "test-user")
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
 		_, err := service.BatchShorten(ctx, req)
 		if err == nil {
 			t.Fatal("expected error for empty correlation id, got nil")
@@ -217,7 +218,7 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 		req := []model.BatchRequestItem{
 			{CorrelationID: "1", OriginalURL: ""},
 		}
-		ctx := context.WithValue(context.Background(), "userID", "test-user")
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
 		_, err := service.BatchShorten(ctx, req)
 		if err == nil {
 			t.Fatal("expected error for empty original url, got nil")

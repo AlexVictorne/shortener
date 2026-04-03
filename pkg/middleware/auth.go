@@ -8,10 +8,8 @@ import (
 
 type contextKey string
 
-const (
-	userIDKey  = "userID"
-	cookieName = "auth_token"
-)
+const UserIDKey contextKey = "userID"
+const cookieName = "auth_token"
 
 func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -33,13 +31,18 @@ func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 					SameSite: http.SameSiteLaxMode,
 				})
 			}
-			ctx := context.WithValue(r.Context(), userIDKey, userID)
+			ctx := context.WithValue(r.Context(), UserIDKey, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
 
 func UserIDFromContext(ctx context.Context) (string, bool) {
-	userID, ok := ctx.Value(userIDKey).(string)
+	userID, ok := ctx.Value(UserIDKey).(string)
 	return userID, ok && userID != ""
+}
+
+// UserIDKey returns the context key for user ID (for cross-package usage)
+func UserIDKeyFunc() interface{} {
+	return UserIDKey
 }

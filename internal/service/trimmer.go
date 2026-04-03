@@ -10,6 +10,7 @@ import (
 	"shortener/internal/model"
 	"shortener/internal/repository"
 	"shortener/pkg/generator"
+	"shortener/pkg/middleware"
 )
 
 var ErrConflict = errors.New("conflict")
@@ -48,7 +49,7 @@ func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (strin
 	}
 
 	var userID string
-	if v := ctx.Value("userID"); v != nil {
+	if v := ctx.Value(middleware.UserIDKeyFunc()); v != nil {
 		if s, ok := v.(string); ok {
 			userID = s
 		}
