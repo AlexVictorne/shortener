@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"shortener/internal/handler"
+	"shortener/internal/handler/options"
 	"shortener/internal/model"
 	"shortener/internal/repository"
 	"shortener/internal/service"
@@ -153,7 +154,7 @@ func TestHandler_RedirectHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := handler.NewHandler(svc, options.WithAuthSecret(testSecret))
 
 	// Сначала сохраним URL
 	ctx := context.WithValue(context.TODO(), middleware.UserIDKey, "test-user")
@@ -208,7 +209,7 @@ func TestHandler_RedirectHandler(t *testing.T) {
 
 func TestHandler_NotFoundHandler(t *testing.T) {
 	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := handler.NewHandler(svc, options.WithAuthSecret(testSecret))
 	req := httptest.NewRequest(http.MethodGet, "/notfound", nil)
 	w := httptest.NewRecorder()
 	h.NotFoundHandler(w, req)
@@ -239,7 +240,7 @@ func TestHandler_Router(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := handler.NewHandler(svc, options.WithAuthSecret(testSecret))
 
 	r := chi.NewRouter()
 	h.SetupRoutes(r)
@@ -284,7 +285,7 @@ func TestHandler_PingHandler(t *testing.T) {
 	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
 
 	t.Run("no pinger", func(t *testing.T) {
-		h := handler.NewHandler(svc)
+		h := handler.NewHandler(svc, options.WithAuthSecret(testSecret))
 		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
 		w := httptest.NewRecorder()
 		h.PingHandler(w, req)
@@ -294,7 +295,7 @@ func TestHandler_PingHandler(t *testing.T) {
 	})
 
 	t.Run("pinger ok", func(t *testing.T) {
-		h := handler.NewHandler(svc).WithPinger(&mockPinger{err: nil})
+		h := handler.NewHandler(svc, options.WithAuthSecret(testSecret), options.WithPinger(&mockPinger{err: nil}))
 		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
 		w := httptest.NewRecorder()
 		h.PingHandler(w, req)
@@ -304,7 +305,7 @@ func TestHandler_PingHandler(t *testing.T) {
 	})
 
 	t.Run("pinger error", func(t *testing.T) {
-		h := handler.NewHandler(svc).WithPinger(&mockPinger{err: assert.AnError})
+		h := handler.NewHandler(svc, options.WithAuthSecret(testSecret), options.WithPinger(&mockPinger{err: assert.AnError}))
 		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
 		w := httptest.NewRecorder()
 		h.PingHandler(w, req)
@@ -402,7 +403,7 @@ func TestHandler_BatchShortenHandler(t *testing.T) {
 const testSecret = "test-secret"
 
 func newTestHandler(svc *service.TrimmerService) *handler.Handler {
-	return handler.NewHandler(svc).WithAuthSecret(testSecret)
+	return handler.NewHandler(svc, options.WithAuthSecret(testSecret))
 }
 
 func wrapWithAuth(h http.HandlerFunc) http.Handler {

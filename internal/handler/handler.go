@@ -13,6 +13,8 @@ import (
 	"shortener/internal/model"
 	"shortener/internal/service"
 	"shortener/pkg/middleware"
+
+	"shortener/internal/handler/options"
 )
 
 type Pinger interface {
@@ -25,19 +27,19 @@ type Handler struct {
 	authSecret string
 }
 
-func NewHandler(service *service.TrimmerService) *Handler {
-	return &Handler{
+func NewHandler(service *service.TrimmerService, opts ...options.OptHandlerOptionsSetter) *Handler {
+	optsStruct := options.NewHandlerOptions(opts...)
+	h := &Handler{
 		service: service,
 	}
-}
-
-func (h *Handler) WithAuthSecret(secret string) *Handler {
-	h.authSecret = secret
-	return h
-}
-
-func (h *Handler) WithPinger(p Pinger) *Handler {
-	h.pinger = p
+	if optsStruct.AuthSecret != "" {
+		h.authSecret = optsStruct.AuthSecret
+	}
+	if optsStruct.Pinger != nil {
+		if p, ok := optsStruct.Pinger.(Pinger); ok {
+			h.pinger = p
+		}
+	}
 	return h
 }
 

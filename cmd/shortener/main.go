@@ -16,6 +16,7 @@ import (
 
 	"shortener/internal/config"
 	"shortener/internal/handler"
+	"shortener/internal/handler/options"
 	"shortener/internal/repository"
 	"shortener/internal/service"
 	"shortener/pkg/generator"
@@ -62,14 +63,16 @@ func main() {
 
 	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
 
-	handler := handler.NewHandler(service).WithAuthSecret(cfg.AuthSecret)
+	handlerOpts := []options.OptHandlerOptionsSetter{
+		options.WithAuthSecret(cfg.AuthSecret),
+	}
 	if pgStore != nil {
-		handler.WithPinger(pgStore)
+		handlerOpts = append(handlerOpts, options.WithPinger(pgStore))
 	}
 
+	handlerInstance := handler.NewHandler(service, handlerOpts...)
 	r := chi.NewRouter()
-
-	handler.SetupRoutes(r)
+	handlerInstance.SetupRoutes(r)
 
 	serverAddr, err := url.Parse(validatedBaseURL)
 	if err != nil {
