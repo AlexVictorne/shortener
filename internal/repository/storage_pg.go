@@ -105,17 +105,20 @@ func (s *PgStorage) GetByUserID(ctx context.Context, userID string) ([]*model.Sh
 	if err != nil {
 		return nil, fmt.Errorf("get by user_id: %w", err)
 	}
-	defer rows.Close()
 	var result []*model.ShortURL
+	var scanErr error
 	for rows.Next() {
 		var u model.ShortURL
 		if err := rows.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL, &u.UserID, &u.DeletedFlag); err != nil {
-			return nil, fmt.Errorf("scan: %w", err)
+			scanErr = fmt.Errorf("scan: %w", err)
+			break
 		}
 		result = append(result, &u)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows: %w", err)
+	rowsErr := rows.Err()
+	closeErr := rows.Close()
+	if scanErr != nil || rowsErr != nil || closeErr != nil {
+		return nil, errors.Join(scanErr, rowsErr, closeErr)
 	}
 	return result, nil
 }
@@ -210,18 +213,21 @@ func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) err
 		}
 		return fmt.Errorf("batch create: %w", err)
 	}
-	defer rows.Close()
 	uuidMap := make(map[string]int)
+	var scanErr error
 	for rows.Next() {
 		var uuid int
 		var short string
 		if err := rows.Scan(&uuid, &short); err != nil {
-			return fmt.Errorf("scan: %w", err)
+			scanErr = fmt.Errorf("scan: %w", err)
+			break
 		}
 		uuidMap[short] = uuid
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("rows: %w", err)
+	rowsErr := rows.Err()
+	closeErr := rows.Close()
+	if scanErr != nil || rowsErr != nil || closeErr != nil {
+		return errors.Join(scanErr, rowsErr, closeErr)
 	}
 	for _, url := range urls {
 		if id, ok := uuidMap[url.ShortURL]; ok {
