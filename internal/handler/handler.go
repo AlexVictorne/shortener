@@ -55,15 +55,24 @@ func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
 
 	shortURL, err := h.service.TrimURL(r.Context(), string(body))
 	if err != nil {
-		if errors.Is(err, service.ErrConflict) {
+		switch {
+		case errors.Is(err, service.ErrConflict):
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusConflict)
 			w.Write([]byte(shortURL))
 			return
+		case errors.Is(err, service.ErrURLEmpty),
+			errors.Is(err, service.ErrURLTooLong),
+			errors.Is(err, service.ErrURLInvalidFormat),
+			errors.Is(err, service.ErrURLInvalidScheme),
+			errors.Is(err, service.ErrURLNoHost):
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		default:
+			log.Printf("TrimURL error: %v", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
 		}
-		log.Printf("TrimURL error: %v", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
@@ -94,16 +103,25 @@ func (h *Handler) ShortenURLJSONHandler(w http.ResponseWriter, r *http.Request) 
 
 	shortURL, err := h.service.TrimURL(r.Context(), req.URL)
 	if err != nil {
-		if errors.Is(err, service.ErrConflict) {
+		switch {
+		case errors.Is(err, service.ErrConflict):
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			resp := shortenResponse{Result: shortURL}
 			json.NewEncoder(w).Encode(resp)
 			return
+		case errors.Is(err, service.ErrURLEmpty),
+			errors.Is(err, service.ErrURLTooLong),
+			errors.Is(err, service.ErrURLInvalidFormat),
+			errors.Is(err, service.ErrURLInvalidScheme),
+			errors.Is(err, service.ErrURLNoHost):
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		default:
+			log.Printf("TrimURL error: %v", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
 		}
-		log.Printf("TrimURL error: %v", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -119,11 +137,11 @@ func (h *Handler) GetUserURLsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	urls, err := h.service.GetURLsByUser(r.Context(), userID)
 	if err != nil {
+		if errors.Is(err, service.ErrNoContent) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
-	}
-	if len(urls) == 0 {
-		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -226,8 +244,21 @@ func (h *Handler) BatchShortenHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.BatchShorten(r.Context(), req)
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
+		switch {
+		case errors.Is(err, service.ErrBatchItemEmpty):
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		case errors.Is(err, service.ErrURLEmpty),
+			errors.Is(err, service.ErrURLTooLong),
+			errors.Is(err, service.ErrURLInvalidFormat),
+			errors.Is(err, service.ErrURLInvalidScheme),
+			errors.Is(err, service.ErrURLNoHost):
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		default:
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

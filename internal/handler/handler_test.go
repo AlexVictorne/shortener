@@ -259,7 +259,7 @@ func TestHandler_Router(t *testing.T) {
 		{name: "not found GET", url: "/abc12345", method: http.MethodGet, want: http.StatusText(http.StatusNotFound), status: http.StatusNotFound},
 		{name: "other adress GET", url: "/yaopo/oi", method: http.MethodGet, want: http.StatusText(http.StatusNotFound), status: http.StatusNotFound},
 		{name: "unsupported type POST", url: "/", contentType: "application/json", method: http.MethodPost, want: http.StatusText(http.StatusBadRequest), status: http.StatusBadRequest},
-		{name: "empty POST", url: "/", contentType: "text/plain", method: http.MethodPost, want: http.StatusText(http.StatusInternalServerError), status: http.StatusInternalServerError},
+		{name: "empty POST", url: "/", contentType: "text/plain", method: http.MethodPost, want: http.StatusText(http.StatusBadRequest), status: http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {

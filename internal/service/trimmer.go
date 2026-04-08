@@ -14,7 +14,17 @@ import (
 	"shortener/pkg/middleware"
 )
 
-var ErrConflict = errors.New("conflict")
+var (
+	ErrNoContent             = errors.New("no content")
+	ErrConflict              = errors.New("conflict")
+	ErrURLEmpty              = errors.New("url is empty")
+	ErrURLTooLong            = errors.New("url is too long")
+	ErrURLInvalidFormat      = errors.New("invalid url format")
+	ErrURLInvalidScheme      = errors.New("url must start with http or https")
+	ErrURLNoHost             = errors.New("url must have host")
+	ErrBatchItemEmpty        = errors.New("empty original_url or correlation_id")
+	ErrInvalidShortURLFormat = errors.New("invalid short url format")
+)
 
 type TrimmerService struct {
 	storage   repository.Storage
@@ -113,26 +123,21 @@ func (s *TrimmerService) buildShortURL(id string) string {
 
 func (s *TrimmerService) validateURL(rawURL string) error {
 	if strings.TrimSpace(rawURL) == "" {
-		return errors.New("URL cannot be empty")
+		return ErrURLEmpty
 	}
-
 	if len(rawURL) > 2048 {
-		return errors.New("URL is too long")
+		return ErrURLTooLong
 	}
-
 	parsed, err := url.ParseRequestURI(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid URL format: %w", err)
+		return ErrURLInvalidFormat
 	}
-
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return errors.New("URL must start with http:// or https://")
+		return ErrURLInvalidScheme
 	}
-
 	if parsed.Host == "" {
-		return errors.New("URL must have host")
+		return ErrURLNoHost
 	}
-
 	return nil
 }
 
@@ -157,9 +162,8 @@ func (s *TrimmerService) normalizeURL(rawURL string) (string, error) {
 func extractID(shortURL string) (string, error) {
 	parts := strings.Split(shortURL, "/")
 	if len(parts) == 0 {
-		return "", errors.New("invalid short URL format")
+		return "", ErrInvalidShortURLFormat
 	}
-
 	return parts[len(parts)-1], nil
 }
 
@@ -175,7 +179,7 @@ func (s *TrimmerService) BatchShorten(ctx context.Context, req []model.BatchRequ
 	resp := make([]model.BatchResponseItem, 0, len(req))
 	for _, item := range req {
 		if item.OriginalURL == "" || item.CorrelationID == "" {
-			return nil, errors.New("empty original_url or correlation_id")
+			return nil, ErrBatchItemEmpty
 		}
 		if err := s.ValidateURL(item.OriginalURL); err != nil {
 			return nil, err
@@ -240,7 +244,7 @@ func (s *TrimmerService) GetURLsByUser(ctx context.Context, userID string) ([]mo
 		return nil, err
 	}
 	if len(urls) == 0 {
-		return nil, nil
+		return nil, ErrNoContent
 	}
 	resp := make([]model.UserURLResponse, 0, len(urls))
 	for _, u := range urls {
