@@ -13,6 +13,8 @@ import (
 	"shortener/internal/model"
 	"shortener/internal/service"
 	"shortener/pkg/middleware"
+
+	"shortener/internal/handler/options"
 )
 
 type Pinger interface {
@@ -20,18 +22,24 @@ type Pinger interface {
 }
 
 type Handler struct {
-	service *service.TrimmerService
-	pinger  Pinger
+	service    *service.TrimmerService
+	pinger     Pinger
+	authSecret string
 }
 
-func NewHandler(service *service.TrimmerService) *Handler {
-	return &Handler{
+func NewHandler(service *service.TrimmerService, opts ...options.OptHandlerOptionsSetter) *Handler {
+	optsStruct := options.NewHandlerOptions(opts...)
+	h := &Handler{
 		service: service,
 	}
-}
-
-func (h *Handler) WithPinger(p Pinger) *Handler {
-	h.pinger = p
+	if optsStruct.AuthSecret != "" {
+		h.authSecret = optsStruct.AuthSecret
+	}
+	if optsStruct.Pinger != nil {
+		if p, ok := optsStruct.Pinger.(Pinger); ok {
+			h.pinger = p
+		}
+	}
 	return h
 }
 
@@ -49,15 +57,24 @@ func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
 
 	shortURL, err := h.service.TrimURL(r.Context(), string(body))
 	if err != nil {
-		if errors.Is(err, service.ErrConflict) {
+		switch {
+		case errors.Is(err, service.ErrConflict):
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusConflict)
 			w.Write([]byte(shortURL))
 			return
+		case errors.Is(err, service.ErrURLEmpty),
+			errors.Is(err, service.ErrURLTooLong),
+			errors.Is(err, service.ErrURLInvalidFormat),
+			errors.Is(err, service.ErrURLInvalidScheme),
+			errors.Is(err, service.ErrURLNoHost):
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		default:
+			log.Printf("TrimURL error: %v", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
 		}
-		log.Printf("TrimURL error: %v", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
@@ -88,21 +105,50 @@ func (h *Handler) ShortenURLJSONHandler(w http.ResponseWriter, r *http.Request) 
 
 	shortURL, err := h.service.TrimURL(r.Context(), req.URL)
 	if err != nil {
-		if errors.Is(err, service.ErrConflict) {
+		switch {
+		case errors.Is(err, service.ErrConflict):
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
 			resp := shortenResponse{Result: shortURL}
 			json.NewEncoder(w).Encode(resp)
 			return
+		case errors.Is(err, service.ErrURLEmpty),
+			errors.Is(err, service.ErrURLTooLong),
+			errors.Is(err, service.ErrURLInvalidFormat),
+			errors.Is(err, service.ErrURLInvalidScheme),
+			errors.Is(err, service.ErrURLNoHost):
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		default:
+			log.Printf("TrimURL error: %v", err)
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
 		}
-		log.Printf("TrimURL error: %v", err)
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	resp := shortenResponse{Result: shortURL}
 	json.NewEncoder(w).Encode(resp)
+}
+
+func (h *Handler) GetUserURLsHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	urls, err := h.service.GetURLsByUser(r.Context(), userID)
+	if err != nil {
+		if errors.Is(err, service.ErrNoContent) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(urls)
 }
 
 func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +168,10 @@ func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 	// load original
 	originalURL, err := h.service.GetOriginalURL(r.Context(), id)
 	if err != nil {
+		if errors.Is(err, service.ErrURLDeleted) {
+			http.Error(w, http.StatusText(http.StatusGone), http.StatusGone)
+			return
+		}
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
@@ -149,14 +199,33 @@ func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+func (h *Handler) DeleteUserURLsHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.UserIDFromContext(r.Context())
+	if !ok || userID == "" {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+		return
+	}
+	var ids []string
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
+	if err := dec.Decode(&ids); err != nil || len(ids) == 0 {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	_ = h.service.MarkURLsDeleted(r.Context(), userID, ids)
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Use(middleware.RequestResponseLogger)
 	mux.Use(middleware.GzipMiddleware)
+	mux.Use(middleware.AuthMiddleware(h.authSecret))
 
 	mux.Get("/ping", h.PingHandler)
 	mux.Post("/", h.ShortenURLHandler)
 	mux.Post("/api/shorten", h.ShortenURLJSONHandler)
 	mux.Post("/api/shorten/batch", h.BatchShortenHandler)
+	mux.Get("/api/user/urls", h.GetUserURLsHandler)
+	mux.Delete("/api/user/urls", h.DeleteUserURLsHandler)
 	mux.Get("/{id}", h.RedirectHandler)
 	mux.NotFound(h.NotFoundHandler)
 	mux.MethodNotAllowed(h.MethodNotAllowedHandler)
@@ -177,8 +246,21 @@ func (h *Handler) BatchShortenHandler(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.BatchShorten(r.Context(), req)
 	if err != nil {
-		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-		return
+		switch {
+		case errors.Is(err, service.ErrBatchItemEmpty):
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		case errors.Is(err, service.ErrURLEmpty),
+			errors.Is(err, service.ErrURLTooLong),
+			errors.Is(err, service.ErrURLInvalidFormat),
+			errors.Is(err, service.ErrURLInvalidScheme),
+			errors.Is(err, service.ErrURLNoHost):
+			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			return
+		default:
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

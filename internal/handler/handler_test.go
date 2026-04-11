@@ -2,27 +2,32 @@ package handler_test
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"shortener/internal/handler"
+	"shortener/internal/handler/options"
+	"shortener/internal/model"
 	"shortener/internal/repository"
 	"shortener/internal/service"
 	"shortener/pkg/generator"
+	"shortener/pkg/middleware"
 )
 
 func TestHandler_ShortenURLJSONHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := newTestHandler(svc)
 
 	tests := []struct {
 		name            string
@@ -70,7 +75,7 @@ func TestHandler_ShortenURLJSONHandler(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/api/shorten", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
 			w := httptest.NewRecorder()
-			h.ShortenURLJSONHandler(w, req)
+			wrapWithAuth(h.ShortenURLJSONHandler).ServeHTTP(w, req)
 			res := w.Result()
 			defer res.Body.Close()
 
@@ -91,7 +96,7 @@ func TestHandler_ShortenURLHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := newTestHandler(svc)
 
 	tests := []struct {
 		name           string
@@ -130,7 +135,7 @@ func TestHandler_ShortenURLHandler(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
 			w := httptest.NewRecorder()
-			h.ShortenURLHandler(w, req)
+			wrapWithAuth(h.ShortenURLHandler).ServeHTTP(w, req)
 			res := w.Result()
 			defer res.Body.Close()
 
@@ -149,10 +154,11 @@ func TestHandler_RedirectHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := handler.NewHandler(svc, options.WithAuthSecret(testSecret))
 
 	// Сначала сохраним URL
-	shortURL, _ := svc.TrimURL(context.TODO(), "https://ya.ru")
+	ctx := context.WithValue(context.TODO(), middleware.UserIDKey, "test-user")
+	shortURL, _ := svc.TrimURL(ctx, "https://ya.ru")
 	id := strings.TrimPrefix(shortURL, "http://localhost:8080/")
 
 	tests := []struct {
@@ -203,7 +209,7 @@ func TestHandler_RedirectHandler(t *testing.T) {
 
 func TestHandler_NotFoundHandler(t *testing.T) {
 	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := handler.NewHandler(svc, options.WithAuthSecret(testSecret))
 	req := httptest.NewRequest(http.MethodGet, "/notfound", nil)
 	w := httptest.NewRecorder()
 	h.NotFoundHandler(w, req)
@@ -234,7 +240,7 @@ func TestHandler_Router(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := handler.NewHandler(svc, options.WithAuthSecret(testSecret))
 
 	r := chi.NewRouter()
 	h.SetupRoutes(r)
@@ -254,7 +260,7 @@ func TestHandler_Router(t *testing.T) {
 		{name: "not found GET", url: "/abc12345", method: http.MethodGet, want: http.StatusText(http.StatusNotFound), status: http.StatusNotFound},
 		{name: "other adress GET", url: "/yaopo/oi", method: http.MethodGet, want: http.StatusText(http.StatusNotFound), status: http.StatusNotFound},
 		{name: "unsupported type POST", url: "/", contentType: "application/json", method: http.MethodPost, want: http.StatusText(http.StatusBadRequest), status: http.StatusBadRequest},
-		{name: "empty POST", url: "/", contentType: "text/plain", method: http.MethodPost, want: http.StatusText(http.StatusInternalServerError), status: http.StatusInternalServerError},
+		{name: "empty POST", url: "/", contentType: "text/plain", method: http.MethodPost, want: http.StatusText(http.StatusBadRequest), status: http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
@@ -279,7 +285,7 @@ func TestHandler_PingHandler(t *testing.T) {
 	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
 
 	t.Run("no pinger", func(t *testing.T) {
-		h := handler.NewHandler(svc)
+		h := handler.NewHandler(svc, options.WithAuthSecret(testSecret))
 		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
 		w := httptest.NewRecorder()
 		h.PingHandler(w, req)
@@ -289,7 +295,7 @@ func TestHandler_PingHandler(t *testing.T) {
 	})
 
 	t.Run("pinger ok", func(t *testing.T) {
-		h := handler.NewHandler(svc).WithPinger(&mockPinger{err: nil})
+		h := handler.NewHandler(svc, options.WithAuthSecret(testSecret), options.WithPinger(&mockPinger{err: nil}))
 		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
 		w := httptest.NewRecorder()
 		h.PingHandler(w, req)
@@ -299,7 +305,7 @@ func TestHandler_PingHandler(t *testing.T) {
 	})
 
 	t.Run("pinger error", func(t *testing.T) {
-		h := handler.NewHandler(svc).WithPinger(&mockPinger{err: assert.AnError})
+		h := handler.NewHandler(svc, options.WithAuthSecret(testSecret), options.WithPinger(&mockPinger{err: assert.AnError}))
 		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
 		w := httptest.NewRecorder()
 		h.PingHandler(w, req)
@@ -313,7 +319,7 @@ func TestHandler_BatchShortenHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
-	h := handler.NewHandler(svc)
+	h := newTestHandler(svc)
 
 	tests := []struct {
 		name           string
@@ -380,7 +386,7 @@ func TestHandler_BatchShortenHandler(t *testing.T) {
 			req := httptest.NewRequest(tt.method, "/api/shorten/batch", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
 			w := httptest.NewRecorder()
-			h.BatchShortenHandler(w, req)
+			wrapWithAuth(h.BatchShortenHandler).ServeHTTP(w, req)
 			res := w.Result()
 			defer res.Body.Close()
 
@@ -392,4 +398,160 @@ func TestHandler_BatchShortenHandler(t *testing.T) {
 			}
 		})
 	}
+}
+
+const testSecret = "test-secret"
+
+func newTestHandler(svc *service.TrimmerService) *handler.Handler {
+	return handler.NewHandler(svc, options.WithAuthSecret(testSecret))
+}
+
+func wrapWithAuth(h http.HandlerFunc) http.Handler {
+	return middleware.AuthMiddleware(testSecret)(h)
+}
+
+func TestHandler_GetUserURLsHandler(t *testing.T) {
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+	h := newTestHandler(svc)
+
+	req := httptest.NewRequest("GET", "/api/user/urls", nil)
+	rw := httptest.NewRecorder()
+	h.GetUserURLsHandler(rw, req)
+	resp := rw.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+
+	req2 := httptest.NewRequest("GET", "/api/user/urls", nil)
+	rw2 := httptest.NewRecorder()
+	wrapWithAuth(h.GetUserURLsHandler).ServeHTTP(rw2, req2)
+	resp2 := rw2.Result()
+	defer resp2.Body.Close()
+	assert.Equal(t, http.StatusNoContent, resp2.StatusCode)
+
+	req3 := httptest.NewRequest("POST", "/api/shorten", strings.NewReader("https://ya.ru"))
+	req3.Header.Set("Content-Type", "text/plain")
+	rw3 := httptest.NewRecorder()
+	wrapWithAuth(h.ShortenURLHandler).ServeHTTP(rw3, req3)
+	resp3 := rw3.Result()
+	defer resp3.Body.Close()
+	assert.Equal(t, http.StatusCreated, resp3.StatusCode)
+
+	// Получаем auth_token из Set-Cookie
+	var authToken string
+	for _, c := range resp3.Cookies() {
+		if c.Name == "auth_token" {
+			authToken = c.Value
+			break
+		}
+	}
+	if authToken == "" {
+		t.Fatal("auth_token cookie not set after POST /api/shorten")
+	}
+
+	req4 := httptest.NewRequest("GET", "/api/user/urls", nil)
+	req4.AddCookie(&http.Cookie{Name: "auth_token", Value: authToken})
+	rw4 := httptest.NewRecorder()
+	wrapWithAuth(h.GetUserURLsHandler).ServeHTTP(rw4, req4)
+	resp4 := rw4.Result()
+	defer resp4.Body.Close()
+	assert.Equal(t, http.StatusOK, resp4.StatusCode)
+	assert.Equal(t, "application/json", resp4.Header.Get("Content-Type"))
+	b, _ := io.ReadAll(resp4.Body)
+	var urls []model.UserURLResponse
+	_ = json.Unmarshal(b, &urls)
+	assert.GreaterOrEqual(t, len(urls), 1)
+	assert.Contains(t, urls[0].OriginalURL, "https://ya.ru")
+}
+
+func TestHandler_DeleteUserURLsHandler(t *testing.T) {
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+	h := newTestHandler(svc)
+
+	reqCreate := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url": "https://yandex.ru"}`))
+	reqCreate.Header.Set("Content-Type", "application/json")
+	rwCreate := httptest.NewRecorder()
+	wrapWithAuth(h.ShortenURLJSONHandler).ServeHTTP(rwCreate, reqCreate)
+	respCreate := rwCreate.Result()
+	defer respCreate.Body.Close()
+	assert.Equal(t, http.StatusCreated, respCreate.StatusCode)
+
+	var authToken string
+	for _, c := range respCreate.Cookies() {
+		if c.Name == "auth_token" {
+			authToken = c.Value
+			break
+		}
+	}
+	if authToken == "" {
+		t.Fatal("auth_token cookie not set after POST /api/shorten")
+	}
+
+	var respData struct {
+		Result string `json:"result"`
+	}
+	b, _ := io.ReadAll(respCreate.Body)
+	err := json.Unmarshal(b, &respData)
+	require.NoError(t, err)
+	shortURL := respData.Result
+	parts := strings.Split(shortURL, "/")
+	id := parts[len(parts)-1]
+
+	body := `["` + id + `"]`
+	req := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: "auth_token", Value: authToken})
+	rw := httptest.NewRecorder()
+	wrapWithAuth(h.DeleteUserURLsHandler).ServeHTTP(rw, req)
+	resp := rw.Result()
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
+
+	var deleted bool
+	for i := 0; i < 1000; i++ {
+		u, _ := storage.Get(context.Background(), id)
+		if u != nil && u.DeletedFlag {
+			deleted = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !deleted {
+		t.Fatal("DeletedFlag was not set after waiting")
+	}
+
+	reqGone := httptest.NewRequest(http.MethodGet, "/"+id, nil)
+	rwGone := httptest.NewRecorder()
+	h.RedirectHandler(rwGone, reqGone)
+	respGone := rwGone.Result()
+	defer respGone.Body.Close()
+	assert.Equal(t, http.StatusGone, respGone.StatusCode)
+
+	req2 := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader(body))
+	rw2 := httptest.NewRecorder()
+	h.DeleteUserURLsHandler(rw2, req2)
+	resp2 := rw2.Result()
+	defer resp2.Body.Close()
+	assert.Equal(t, http.StatusUnauthorized, resp2.StatusCode)
+
+	req3 := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader("{"))
+	rw3 := httptest.NewRecorder()
+	wrapWithAuth(h.DeleteUserURLsHandler).ServeHTTP(rw3, req3)
+	resp3 := rw3.Result()
+	defer resp3.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp3.StatusCode)
+
+	url2 := &model.ShortURL{ShortURL: "other123", OriginalURL: "https://ya.ru", UserID: "user2"}
+	_ = storage.Create(context.Background(), url2)
+	bodyOther := `["other123"]`
+	req4 := httptest.NewRequest(http.MethodDelete, "/api/user/urls", strings.NewReader(bodyOther))
+	rw4 := httptest.NewRecorder()
+	wrapWithAuth(h.DeleteUserURLsHandler).ServeHTTP(rw4, req4)
+	resp4 := rw4.Result()
+	defer resp4.Body.Close()
+	assert.Equal(t, http.StatusAccepted, resp4.StatusCode)
+	u2, _ := storage.Get(context.Background(), "other123")
+	assert.False(t, u2.DeletedFlag)
 }

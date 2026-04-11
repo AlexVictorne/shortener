@@ -22,14 +22,18 @@ type Storage interface {
 	BatchCreate(ctx context.Context, urls []*model.ShortURL) error
 	Get(ctx context.Context, shortURL string) (*model.ShortURL, error)
 	GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error)
+	GetByUserID(ctx context.Context, userID string) ([]*model.ShortURL, error)
 
 	Close() error
+	BatchMarkDeleted(ctx context.Context, userID string, shortURLs []string) error
 }
 
 type MemStorage struct {
-	mu       sync.Mutex
-	urls     map[string]*model.ShortURL // key: shortURL
-	index    map[string]string          // key: originalURL, value: shortURL
+	mu        sync.Mutex
+	urls      map[string]*model.ShortURL // key: shortURL
+	index     map[string]string          // key: originalURL, value: shortURL
+	userIndex map[string][]string        // key: userID, value: []shortURL
+
 	nextUUID int
 	filePath string
 }
@@ -51,11 +55,13 @@ func (s *MemStorage) ImportAll(urls []model.ShortURL) {
 
 	s.urls = make(map[string]*model.ShortURL)
 	s.index = make(map[string]string)
+	s.userIndex = make(map[string][]string)
 	s.nextUUID = 1
 	for i := range urls {
 		u := urls[i]
 		s.urls[u.ShortURL] = &u
 		s.index[u.OriginalURL] = u.ShortURL
+		s.userIndex[u.UserID] = append(s.userIndex[u.UserID], u.ShortURL)
 		if u.UUID >= s.nextUUID {
 			s.nextUUID = u.UUID + 1
 		}
@@ -76,12 +82,25 @@ func (s *MemStorage) LoadFromFile(filePath string) error {
 	return nil
 }
 
+func (s *MemStorage) BatchMarkDeleted(ctx context.Context, userID string, shortURLs []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, short := range shortURLs {
+		url, ok := s.urls[short]
+		if ok && url.UserID == userID {
+			url.DeletedFlag = true
+		}
+	}
+	return nil
+}
+
 func NewMemStorage() *MemStorage {
 	return &MemStorage{
-		urls:     make(map[string]*model.ShortURL),
-		index:    make(map[string]string),
-		nextUUID: 1,
-		filePath: "",
+		urls:      make(map[string]*model.ShortURL),
+		index:     make(map[string]string),
+		userIndex: make(map[string][]string),
+		nextUUID:  1,
+		filePath:  "",
 	}
 }
 
@@ -122,6 +141,7 @@ func (s *MemStorage) Create(ctx context.Context, url *model.ShortURL) error {
 
 	s.urls[url.ShortURL] = url
 	s.index[url.OriginalURL] = url.ShortURL
+	s.userIndex[url.UserID] = append(s.userIndex[url.UserID], url.ShortURL)
 
 	return nil
 }
@@ -164,6 +184,23 @@ func (s *MemStorage) GetByOriginal(ctx context.Context, originalURL string) (*mo
 
 	urlCopy := *url
 	return &urlCopy, nil
+}
+
+func (s *MemStorage) GetByUserID(ctx context.Context, userID string) ([]*model.ShortURL, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := s.userIndex[userID]
+	result := make([]*model.ShortURL, 0, len(ids))
+	for _, id := range ids {
+		if url, ok := s.urls[id]; ok {
+			copy := *url
+			result = append(result, &copy)
+		}
+	}
+	return result, nil
 }
 
 func (s *MemStorage) Close() error {
@@ -216,6 +253,7 @@ func (s *MemStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) er
 		}
 		s.urls[url.ShortURL] = url
 		s.index[url.OriginalURL] = url.ShortURL
+		s.userIndex[url.UserID] = append(s.userIndex[url.UserID], url.ShortURL)
 	}
 	return nil
 }

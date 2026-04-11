@@ -39,11 +39,11 @@ func NewPgStorage(ctx context.Context, dsn string) (*PgStorage, error) {
 
 func (s *PgStorage) Create(ctx context.Context, url *model.ShortURL) error {
 	row := s.db.QueryRowContext(ctx, `
-		INSERT INTO short_urls (short_url, original_url)
-		VALUES ($1, $2)
+		INSERT INTO short_urls (short_url, original_url, user_id)
+		VALUES ($1, $2, $3)
 		ON CONFLICT (original_url) DO UPDATE SET original_url = EXCLUDED.original_url
 		RETURNING uuid, short_url
-	`, url.ShortURL, url.OriginalURL)
+	`, url.ShortURL, url.OriginalURL, url.UserID)
 
 	var existing model.ShortURL
 	if err := row.Scan(&existing.UUID, &existing.ShortURL); err != nil {
@@ -62,13 +62,13 @@ func (s *PgStorage) Create(ctx context.Context, url *model.ShortURL) error {
 
 func (s *PgStorage) Get(ctx context.Context, shortURL string) (*model.ShortURL, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT uuid, short_url, original_url
-		FROM short_urls
-		WHERE short_url = $1
-	`, shortURL)
+	       SELECT uuid, short_url, original_url, user_id, is_deleted
+	       FROM short_urls
+	       WHERE short_url = $1
+       `, shortURL)
 
 	var u model.ShortURL
-	if err := row.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL); err != nil {
+	if err := row.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL, &u.UserID, &u.DeletedFlag); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("not found: %w", ErrNotFound)
 		}
@@ -80,13 +80,13 @@ func (s *PgStorage) Get(ctx context.Context, shortURL string) (*model.ShortURL, 
 
 func (s *PgStorage) GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT uuid, short_url, original_url
-		FROM short_urls
-		WHERE original_url = $1
-	`, originalURL)
+	       SELECT uuid, short_url, original_url, user_id, is_deleted
+	       FROM short_urls
+	       WHERE original_url = $1
+       `, originalURL)
 
 	var u model.ShortURL
-	if err := row.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL); err != nil {
+	if err := row.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL, &u.UserID, &u.DeletedFlag); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("not found: %w", ErrNotFound)
 		}
@@ -94,6 +94,53 @@ func (s *PgStorage) GetByOriginal(ctx context.Context, originalURL string) (*mod
 	}
 
 	return &u, nil
+}
+
+func (s *PgStorage) GetByUserID(ctx context.Context, userID string) ([]*model.ShortURL, error) {
+	rows, err := s.db.QueryContext(ctx, `
+	       SELECT uuid, short_url, original_url, user_id, is_deleted
+	       FROM short_urls
+	       WHERE user_id = $1
+       `, userID)
+	if err != nil {
+		return nil, fmt.Errorf("get by user_id: %w", err)
+	}
+	var result []*model.ShortURL
+	var scanErr error
+	for rows.Next() {
+		var u model.ShortURL
+		if err := rows.Scan(&u.UUID, &u.ShortURL, &u.OriginalURL, &u.UserID, &u.DeletedFlag); err != nil {
+			scanErr = fmt.Errorf("scan: %w", err)
+			break
+		}
+		result = append(result, &u)
+	}
+	rowsErr := rows.Err()
+	closeErr := rows.Close()
+	if scanErr != nil || rowsErr != nil || closeErr != nil {
+		return nil, errors.Join(scanErr, rowsErr, closeErr)
+	}
+	return result, nil
+}
+
+func (s *PgStorage) BatchMarkDeleted(ctx context.Context, userID string, shortURLs []string) error {
+	if len(shortURLs) == 0 {
+		return nil
+	}
+
+	placeholders := make([]string, len(shortURLs))
+	args := make([]interface{}, 0, len(shortURLs)+1)
+	args = append(args, userID)
+	for i, url := range shortURLs {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, url)
+	}
+	query := fmt.Sprintf(`UPDATE short_urls SET is_deleted = TRUE WHERE user_id = $1 AND short_url IN (%s)`, strings.Join(placeholders, ","))
+	_, err := s.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("batch mark deleted: %w", err)
+	}
+	return nil
 }
 
 func (s *PgStorage) Ping(ctx context.Context) error {
@@ -151,12 +198,12 @@ func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) err
 	defer tx.Rollback()
 
 	valueStrings := make([]string, 0, len(urls))
-	valueArgs := make([]interface{}, 0, len(urls)*2)
+	valueArgs := make([]interface{}, 0, len(urls)*3)
 	for i, url := range urls {
-		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d)", i*2+1, i*2+2))
-		valueArgs = append(valueArgs, url.ShortURL, url.OriginalURL)
+		valueStrings = append(valueStrings, fmt.Sprintf("($%d, $%d, $%d)", i*3+1, i*3+2, i*3+3))
+		valueArgs = append(valueArgs, url.ShortURL, url.OriginalURL, url.UserID)
 	}
-	query := "INSERT INTO short_urls (short_url, original_url) VALUES " +
+	query := "INSERT INTO short_urls (short_url, original_url, user_id) VALUES " +
 		strings.Join(valueStrings, ",") +
 		" RETURNING uuid, short_url"
 	rows, err := tx.QueryContext(ctx, query, valueArgs...)
@@ -166,18 +213,21 @@ func (s *PgStorage) BatchCreate(ctx context.Context, urls []*model.ShortURL) err
 		}
 		return fmt.Errorf("batch create: %w", err)
 	}
-	defer rows.Close()
 	uuidMap := make(map[string]int)
+	var scanErr error
 	for rows.Next() {
 		var uuid int
 		var short string
 		if err := rows.Scan(&uuid, &short); err != nil {
-			return fmt.Errorf("scan: %w", err)
+			scanErr = fmt.Errorf("scan: %w", err)
+			break
 		}
 		uuidMap[short] = uuid
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("rows: %w", err)
+	rowsErr := rows.Err()
+	closeErr := rows.Close()
+	if scanErr != nil || rowsErr != nil || closeErr != nil {
+		return errors.Join(scanErr, rowsErr, closeErr)
 	}
 	for _, url := range urls {
 		if id, ok := uuidMap[url.ShortURL]; ok {

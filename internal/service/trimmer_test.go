@@ -2,11 +2,18 @@ package service_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"shortener/internal/model"
 	"shortener/internal/repository"
 	"shortener/internal/service"
 	"shortener/pkg/generator"
+	"shortener/pkg/middleware"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestTrimmerService_TrimURL(t *testing.T) {
@@ -56,7 +63,8 @@ func TestTrimmerService_TrimURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := service.NewTrimmerService(tt.storage, tt.generator, tt.baseURL)
-			got, gotErr := s.TrimURL(context.Background(), tt.originalURL)
+			ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
+			got, gotErr := s.TrimURL(ctx, tt.originalURL)
 			if gotErr != nil {
 				if !tt.wantErr {
 					t.Errorf("TrimURL failed: %v", gotErr)
@@ -75,14 +83,15 @@ func TestTrimmerService_TrimURL(t *testing.T) {
 
 func TestTrimmerService_GetOriginalURL(t *testing.T) {
 	tests := []struct {
-		name      string
-		storage   repository.Storage
-		generator generator.IDGenerator
-		baseURL   string
-		prefill   *model.ShortURL
-		shortURL  string
-		want      string
-		wantErr   bool
+		name        string
+		storage     repository.Storage
+		generator   generator.IDGenerator
+		baseURL     string
+		prefill     *model.ShortURL
+		shortURL    string
+		want        string
+		wantErr     bool
+		wantDeleted bool
 	}{
 		{
 			name:      "found",
@@ -119,6 +128,16 @@ func TestTrimmerService_GetOriginalURL(t *testing.T) {
 			shortURL:  "http://localhost:8080/!badid!",
 			wantErr:   true,
 		},
+		{
+			name:        "deleted url returns ErrURLDeleted",
+			storage:     repository.NewMemStorage(),
+			generator:   generator.NewGenerator(8),
+			baseURL:     "http://localhost:8080/",
+			prefill:     &model.ShortURL{ShortURL: "del12345", OriginalURL: "https://ya.ru", DeletedFlag: true},
+			shortURL:    "http://localhost:8080/del12345",
+			wantErr:     true,
+			wantDeleted: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,6 +146,12 @@ func TestTrimmerService_GetOriginalURL(t *testing.T) {
 				_ = tt.storage.Create(context.Background(), tt.prefill)
 			}
 			got, gotErr := s.GetOriginalURL(context.Background(), tt.shortURL)
+			if tt.wantDeleted {
+				if gotErr == nil || !errors.Is(gotErr, service.ErrURLDeleted) {
+					t.Errorf("expected ErrURLDeleted, got %v, url=%v", gotErr, got)
+				}
+				return
+			}
 			if gotErr != nil {
 				if !tt.wantErr {
 					t.Errorf("GetOriginalURL failed: %v", gotErr)
@@ -154,7 +179,8 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 			{CorrelationID: "1", OriginalURL: "https://ya.ru"},
 			{CorrelationID: "2", OriginalURL: "https://google.com"},
 		}
-		resp, err := service.BatchShorten(context.Background(), req)
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
+		resp, err := service.BatchShorten(ctx, req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -176,7 +202,8 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 			{CorrelationID: "1", OriginalURL: "https://ya.ru"},
 			{CorrelationID: "2", OriginalURL: "https://ya.ru"},
 		}
-		resp, err := service.BatchShorten(context.Background(), req)
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
+		resp, err := service.BatchShorten(ctx, req)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -192,7 +219,8 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 		req := []model.BatchRequestItem{
 			{CorrelationID: "1", OriginalURL: "not-a-url"},
 		}
-		_, err := service.BatchShorten(context.Background(), req)
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
+		_, err := service.BatchShorten(ctx, req)
 		if err == nil {
 			t.Fatal("expected error for invalid url, got nil")
 		}
@@ -202,7 +230,8 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 		req := []model.BatchRequestItem{
 			{CorrelationID: "", OriginalURL: "https://ya.ru"},
 		}
-		_, err := service.BatchShorten(context.Background(), req)
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
+		_, err := service.BatchShorten(ctx, req)
 		if err == nil {
 			t.Fatal("expected error for empty correlation id, got nil")
 		}
@@ -212,9 +241,46 @@ func TestTrimmerService_BatchShorten(t *testing.T) {
 		req := []model.BatchRequestItem{
 			{CorrelationID: "1", OriginalURL: ""},
 		}
-		_, err := service.BatchShorten(context.Background(), req)
+		ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
+		_, err := service.BatchShorten(ctx, req)
 		if err == nil {
 			t.Fatal("expected error for empty original url, got nil")
 		}
 	})
+}
+
+func TestTrimmerService_MarkURLsDeleted_FanInChunks(t *testing.T) {
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+	userID := "user-fanin"
+	total := 25000
+	ids := make([]string, 0, total)
+
+	for i := 0; i < total; i++ {
+		id := fmt.Sprintf("id%03d", i)
+		url := &model.ShortURL{ShortURL: id, OriginalURL: fmt.Sprintf("https://site/%d", i), UserID: userID}
+		_ = storage.Create(context.Background(), url)
+		ids = append(ids, id)
+	}
+
+	err := svc.MarkURLsDeleted(context.Background(), userID, ids)
+	require.NoError(t, err)
+
+	var allDeleted bool
+	for i := 0; i < 1000; i++ {
+		allDeleted = true
+		for _, id := range ids {
+			u, _ := storage.Get(context.Background(), id)
+			if u == nil || !u.DeletedFlag {
+				allDeleted = false
+				break
+			}
+		}
+		if allDeleted {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	assert.True(t, allDeleted, "Not all URLs were marked as deleted in fanIn batch")
 }
