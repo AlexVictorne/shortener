@@ -25,6 +25,10 @@ func WithPinger(opt interface{}) OptHandlerOptionsSetter {
 	return func(o *HandlerOptions) { o.Pinger = opt }
 }
 
+func WithAuditor(opt interface{}) OptHandlerOptionsSetter {
+	return func(o *HandlerOptions) { o.Auditor = opt }
+}
+
 func (o *HandlerOptions) Validate() error {
 	return nil
 }

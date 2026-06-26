@@ -6,12 +6,14 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog/log"
 
 	"shortener/internal/model"
 	"shortener/internal/service"
+	"shortener/pkg/audit"
 	"shortener/pkg/middleware"
 
 	"shortener/internal/handler/options"
@@ -25,12 +27,14 @@ type Handler struct {
 	service    *service.TrimmerService
 	pinger     Pinger
 	authSecret string
+	auditor    audit.Auditor
 }
 
 func NewHandler(service *service.TrimmerService, opts ...options.OptHandlerOptionsSetter) *Handler {
 	optsStruct := options.NewHandlerOptions(opts...)
 	h := &Handler{
 		service: service,
+		auditor: audit.NoopAuditor{},
 	}
 	if optsStruct.AuthSecret != "" {
 		h.authSecret = optsStruct.AuthSecret
@@ -40,7 +44,23 @@ func NewHandler(service *service.TrimmerService, opts ...options.OptHandlerOptio
 			h.pinger = p
 		}
 	}
+	if optsStruct.Auditor != nil {
+		if a, ok := optsStruct.Auditor.(audit.Auditor); ok {
+			h.auditor = a
+		}
+	}
 	return h
+}
+
+func (h *Handler) emitAudit(ctx context.Context, action, userID, url string) {
+	if err := h.auditor.Emit(ctx, audit.Event{
+		TS:     time.Now().Unix(),
+		Action: action,
+		UserID: userID,
+		URL:    url,
+	}); err != nil {
+		log.Warn().Err(err).Msg("audit emit failed")
+	}
 }
 
 func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +96,8 @@ func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	h.emitAudit(r.Context(), "shorten", userID, string(body))
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte(shortURL))
@@ -125,6 +147,8 @@ func (h *Handler) ShortenURLJSONHandler(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	h.emitAudit(r.Context(), "shorten", userID, req.URL)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	resp := shortenResponse{Result: shortURL}
@@ -176,6 +200,8 @@ func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, _ := middleware.UserIDFromContext(r.Context())
+	h.emitAudit(r.Context(), "follow", userID, originalURL)
 	http.Redirect(w, r, originalURL, http.StatusTemporaryRedirect)
 }
 

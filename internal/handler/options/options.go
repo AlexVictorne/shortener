@@ -5,4 +5,5 @@ package options
 type HandlerOptions struct {
 	AuthSecret string
 	Pinger     interface{}
+	Auditor    interface{}
 }

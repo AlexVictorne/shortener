@@ -11,6 +11,8 @@ type Config struct {
 	FileStoragePath string
 	DatabaseDSN     string
 	AuthSecret      string
+	AuditFile       string
+	AuditURL        string
 }
 
 func LoadConfig() *Config {
@@ -27,24 +29,34 @@ func LoadConfig() *Config {
 	envNameDatabaseDSN := "DATABASE_DSN"
 	flagNameAuthSecret := "s"
 	envNameAuthSecret := "AUTH_SECRET"
+	flagNameAuditFile := "audit-file"
+	envNameAuditFile := "AUDIT_FILE"
+	flagNameAuditURL := "audit-url"
+	envNameAuditURL := "AUDIT_URL"
 
 	var serverURL string
 	var resultURL string
 	var fileStoragePath string
 	var databaseDSN string
 	var authSecret string
+	var auditFile string
+	var auditURL string
 
 	envServerURL := os.Getenv(envNameServerURL)
 	envResultURL := os.Getenv(envNameBaseURL)
 	envFileStorage := os.Getenv(envNameFileStorage)
 	envDatabaseDSN := os.Getenv(envNameDatabaseDSN)
 	envAuthSecret := os.Getenv(envNameAuthSecret)
+	envAuditFile := os.Getenv(envNameAuditFile)
+	envAuditURL := os.Getenv(envNameAuditURL)
 
 	flagServerURL := flag.String(flagNameServerURL, "", "server base url")
 	flagResultURL := flag.String(flagNameBaseURL, "", "server result url")
 	flagFileStorage := flag.String(flagNameFileStorage, "", "file storage path")
 	flagDatabaseDSN := flag.String(flagNameDatabaseDSN, "", "database connection DSN")
 	flagAuthSecret := flag.String(flagNameAuthSecret, "", "auth secret for cookies")
+	flagAuditFile := flag.String(flagNameAuditFile, "", "path to audit log file")
+	flagAuditURL := flag.String(flagNameAuditURL, "", "URL of remote audit receiver")
 	flag.Parse()
 
 	// Приоритет env > flag > default
@@ -86,11 +98,25 @@ func LoadConfig() *Config {
 		authSecret = "dev_secret"
 	}
 
+	if envAuditFile != "" {
+		auditFile = envAuditFile
+	} else if *flagAuditFile != "" {
+		auditFile = *flagAuditFile
+	}
+
+	if envAuditURL != "" {
+		auditURL = envAuditURL
+	} else if *flagAuditURL != "" {
+		auditURL = *flagAuditURL
+	}
+
 	return &Config{
 		BaseURL:         serverURL,
 		ResultURL:       resultURL,
 		FileStoragePath: fileStoragePath,
 		DatabaseDSN:     databaseDSN,
 		AuthSecret:      authSecret,
+		AuditFile:       auditFile,
+		AuditURL:        auditURL,
 	}
 }
