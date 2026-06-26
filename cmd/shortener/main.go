@@ -19,6 +19,7 @@ import (
 	"shortener/internal/handler/options"
 	"shortener/internal/repository"
 	"shortener/internal/service"
+	"shortener/pkg/audit"
 	"shortener/pkg/generator"
 	"shortener/pkg/validator"
 )
@@ -63,8 +64,11 @@ func main() {
 
 	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
 
+	auditor := audit.Build(cfg.AuditFile, cfg.AuditURL)
+
 	handlerOpts := []options.OptHandlerOptionsSetter{
 		options.WithAuthSecret(cfg.AuthSecret),
+		options.WithAuditor(auditor),
 	}
 	if pgStore != nil {
 		handlerOpts = append(handlerOpts, options.WithPinger(pgStore))
