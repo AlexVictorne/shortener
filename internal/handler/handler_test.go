@@ -600,7 +600,7 @@ func TestHandler_ShortenURLHandler_EmitsAuditEvent(t *testing.T) {
 	require.Len(t, events, 1)
 	assert.Equal(t, "shorten", events[0].Action)
 	assert.Equal(t, "https://ya.ru", events[0].URL)
-	assert.NotZero(t, events[0].Ts)
+	assert.NotZero(t, events[0].TS)
 }
 
 func TestHandler_ShortenURLHandler_NoAuditOnError(t *testing.T) {
@@ -633,7 +633,7 @@ func TestHandler_ShortenURLJSONHandler_EmitsAuditEvent(t *testing.T) {
 	require.Len(t, events, 1)
 	assert.Equal(t, "shorten", events[0].Action)
 	assert.Equal(t, "https://example.com", events[0].URL)
-	assert.NotZero(t, events[0].Ts)
+	assert.NotZero(t, events[0].TS)
 }
 
 func TestHandler_ShortenURLJSONHandler_NoAuditOnError(t *testing.T) {
@@ -670,7 +670,7 @@ func TestHandler_RedirectHandler_EmitsFollowEvent(t *testing.T) {
 	require.Len(t, events, 1)
 	assert.Equal(t, "follow", events[0].Action)
 	assert.Equal(t, "https://ya.ru", events[0].URL)
-	assert.NotZero(t, events[0].Ts)
+	assert.NotZero(t, events[0].TS)
 }
 
 func TestHandler_RedirectHandler_NoAuditOnNotFound(t *testing.T) {

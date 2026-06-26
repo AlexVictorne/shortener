@@ -10,7 +10,7 @@ type Auditor interface {
 	Emit(ctx context.Context, e Event) error
 }
 
-// NoopAuditor используется, когда приёмники не настроены.
+// NoopAuditor используется, когда приемники не настроены.
 type NoopAuditor struct{}
 
 func (NoopAuditor) Emit(_ context.Context, _ Event) error { return nil }

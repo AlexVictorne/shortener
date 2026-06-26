@@ -54,7 +54,7 @@ func NewHandler(service *service.TrimmerService, opts ...options.OptHandlerOptio
 
 func (h *Handler) emitAudit(ctx context.Context, action, userID, url string) {
 	if err := h.auditor.Emit(ctx, audit.Event{
-		Ts:     time.Now().Unix(),
+		TS:     time.Now().Unix(),
 		Action: action,
 		UserID: userID,
 		URL:    url,

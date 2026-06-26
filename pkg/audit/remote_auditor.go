@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// RemoteAuditor отправляет события аудита на удалённый HTTP-сервер методом POST.
+// RemoteAuditor отправляет события аудита на удаленный HTTP-сервер методом POST.
 type RemoteAuditor struct {
 	url    string
 	client *http.Client

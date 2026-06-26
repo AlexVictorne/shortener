@@ -14,7 +14,7 @@ type FileAuditor struct {
 }
 
 func NewFileAuditor(path string) (*FileAuditor, error) {
-	// Проверяем, что файл доступен для записи (создаём если нет).
+	// Проверяем, что файл доступен для записи (создаем если нет).
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err

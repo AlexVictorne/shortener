@@ -20,7 +20,7 @@ import (
 
 func TestNoopAuditor_Emit(t *testing.T) {
 	var a audit.Auditor = audit.NoopAuditor{}
-	err := a.Emit(context.Background(), audit.Event{Ts: 1, Action: "shorten", URL: "https://ya.ru"})
+	err := a.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
 	assert.NoError(t, err)
 }
 
@@ -32,7 +32,7 @@ func TestFileAuditor_Emit_WritesJSONLine(t *testing.T) {
 	fa, err := audit.NewFileAuditor(path)
 	require.NoError(t, err)
 
-	e := audit.Event{Ts: 1700000000, Action: "shorten", UserID: "u1", URL: "https://ya.ru"}
+	e := audit.Event{TS: 1700000000, Action: "shorten", UserID: "u1", URL: "https://ya.ru"}
 	require.NoError(t, fa.Emit(context.Background(), e))
 
 	data, err := os.ReadFile(path)
@@ -50,9 +50,9 @@ func TestFileAuditor_Emit_AppendsMultipleLines(t *testing.T) {
 	require.NoError(t, err)
 
 	events := []audit.Event{
-		{Ts: 1, Action: "shorten", URL: "https://ya.ru"},
-		{Ts: 2, Action: "follow", URL: "https://yandex.ru"},
-		{Ts: 3, Action: "shorten", UserID: "u1", URL: "https://google.com"},
+		{TS: 1, Action: "shorten", URL: "https://ya.ru"},
+		{TS: 2, Action: "follow", URL: "https://yandex.ru"},
+		{TS: 3, Action: "shorten", UserID: "u1", URL: "https://google.com"},
 	}
 	for _, e := range events {
 		require.NoError(t, fa.Emit(context.Background(), e))
@@ -77,7 +77,7 @@ func TestFileAuditor_Emit_OmitsEmptyUserID(t *testing.T) {
 	fa, err := audit.NewFileAuditor(path)
 	require.NoError(t, err)
 
-	require.NoError(t, fa.Emit(context.Background(), audit.Event{Ts: 1, Action: "shorten", URL: "https://ya.ru"}))
+	require.NoError(t, fa.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"}))
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -102,7 +102,7 @@ func TestRemoteAuditor_Emit_SendsPostJSON(t *testing.T) {
 	defer srv.Close()
 
 	ra := audit.NewRemoteAuditor(srv.URL)
-	e := audit.Event{Ts: 999, Action: "follow", UserID: "u2", URL: "https://example.com"}
+	e := audit.Event{TS: 999, Action: "follow", UserID: "u2", URL: "https://example.com"}
 	require.NoError(t, ra.Emit(context.Background(), e))
 
 	var got audit.Event
@@ -117,13 +117,13 @@ func TestRemoteAuditor_Emit_Non2xxReturnsError(t *testing.T) {
 	defer srv.Close()
 
 	ra := audit.NewRemoteAuditor(srv.URL)
-	err := ra.Emit(context.Background(), audit.Event{Ts: 1, Action: "shorten", URL: "https://ya.ru"})
+	err := ra.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
 	assert.Error(t, err)
 }
 
 func TestRemoteAuditor_Emit_ConnectionRefusedReturnsError(t *testing.T) {
 	ra := audit.NewRemoteAuditor("http://127.0.0.1:1") // заведомо недоступный порт
-	err := ra.Emit(context.Background(), audit.Event{Ts: 1, Action: "shorten", URL: "https://ya.ru"})
+	err := ra.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
 	assert.Error(t, err)
 }
 
@@ -135,7 +135,7 @@ func TestMultiAuditor_Emit_CallsAllSinks(t *testing.T) {
 	a2 := &spyAuditor{label: "a2", calls: &calls}
 
 	m := audit.NewMultiAuditor(a1, a2)
-	require.NoError(t, m.Emit(context.Background(), audit.Event{Ts: 1, Action: "shorten", URL: "https://ya.ru"}))
+	require.NoError(t, m.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"}))
 
 	assert.ElementsMatch(t, []string{"a1", "a2"}, calls)
 }
@@ -147,7 +147,7 @@ func TestMultiAuditor_Emit_CollectsAllErrors(t *testing.T) {
 	a2 := &errorAuditor{err: err2}
 
 	m := audit.NewMultiAuditor(a1, a2)
-	err := m.Emit(context.Background(), audit.Event{Ts: 1, Action: "shorten", URL: "https://ya.ru"})
+	err := m.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, err1)
 	assert.ErrorIs(t, err, err2)
@@ -159,9 +159,9 @@ func TestMultiAuditor_Emit_ContinuesOnPartialError(t *testing.T) {
 	a2 := &spyAuditor{label: "a2", calls: &calls}
 
 	m := audit.NewMultiAuditor(a1, a2)
-	err := m.Emit(context.Background(), audit.Event{Ts: 1, Action: "shorten", URL: "https://ya.ru"})
+	err := m.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
 	assert.Error(t, err)
-	assert.Contains(t, calls, "a2") // второй наблюдатель всё равно вызван
+	assert.Contains(t, calls, "a2") // второй наблюдатель все равно вызван
 }
 
 // --- Build ---
@@ -174,7 +174,7 @@ func TestBuild_NeitherParam_ReturnsNoop(t *testing.T) {
 func TestBuild_OnlyFile_ReturnsFileAuditor(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.log")
 	a := audit.Build(path, "")
-	require.NoError(t, a.Emit(context.Background(), audit.Event{Ts: 1, Action: "shorten", URL: "https://ya.ru"}))
+	require.NoError(t, a.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"}))
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.NotEmpty(t, data)
@@ -189,7 +189,7 @@ func TestBuild_OnlyURL_ReturnsRemoteAuditor(t *testing.T) {
 	defer srv.Close()
 
 	a := audit.Build("", srv.URL)
-	require.NoError(t, a.Emit(context.Background(), audit.Event{Ts: 1, Action: "follow", URL: "https://ya.ru"}))
+	require.NoError(t, a.Emit(context.Background(), audit.Event{TS: 1, Action: "follow", URL: "https://ya.ru"}))
 	assert.True(t, called)
 }
 
@@ -204,7 +204,7 @@ func TestBuild_BothParams_ReturnsMultiAuditor(t *testing.T) {
 	defer srv.Close()
 
 	a := audit.Build(path, srv.URL)
-	require.NoError(t, a.Emit(context.Background(), audit.Event{Ts: 1, Action: "shorten", URL: "https://ya.ru"}))
+	require.NoError(t, a.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"}))
 
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
