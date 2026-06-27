@@ -185,9 +185,6 @@ func generateResetMethod(s structInfo) string {
 
 	for _, field := range s.fields {
 		for _, name := range field.Names {
-			if !name.IsExported() && !isLower(name.Name) {
-				// включаем и экспортируемые и неэкспортируемые поля
-			}
 			line := fieldResetLine(recv, name.Name, field.Type)
 			if line != "" {
 				buf.WriteString("\t" + line + "\n")
@@ -299,8 +296,4 @@ func anonFieldName(typ ast.Expr) string {
 		return anonFieldName(t.X)
 	}
 	return ""
-}
-
-func isLower(s string) bool {
-	return s != "" && unicode.IsLower(rune(s[0]))
 }
