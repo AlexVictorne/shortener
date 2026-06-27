@@ -143,6 +143,18 @@ func (s *PgStorage) BatchMarkDeleted(ctx context.Context, userID string, shortUR
 	return nil
 }
 
+// Stats возвращает количество активных коротких URL и уникальных пользователей из PostgreSQL.
+func (s *PgStorage) Stats(ctx context.Context) (int, int, error) {
+	var urls, users int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COUNT(DISTINCT user_id) FROM short_urls WHERE NOT is_deleted`,
+	).Scan(&urls, &users)
+	if err != nil {
+		return 0, 0, fmt.Errorf("stats: %w", err)
+	}
+	return urls, users, nil
+}
+
 func (s *PgStorage) Ping(ctx context.Context) error {
 	return s.db.PingContext(ctx)
 }

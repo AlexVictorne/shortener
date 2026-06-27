@@ -176,3 +176,69 @@ func TestMemStorage_UUID_AutoIncrement(t *testing.T) {
 		t.Error("UUIDs should increment with each new ShortURL")
 	}
 }
+
+// TestMemStorage_Stats проверяет корректный подсчет URL и уникальных пользователей.
+func TestMemStorage_Stats(t *testing.T) {
+	tests := []struct {
+		name      string
+		records   []*model.ShortURL
+		wantURLs  int
+		wantUsers int
+	}{
+		{
+			name:      "empty storage",
+			wantURLs:  0,
+			wantUsers: 0,
+		},
+		{
+			name: "one url one user",
+			records: []*model.ShortURL{
+				{ShortURL: "a1", OriginalURL: "https://example.com", UserID: "user1"},
+			},
+			wantURLs:  1,
+			wantUsers: 1,
+		},
+		{
+			name: "multiple urls same user",
+			records: []*model.ShortURL{
+				{ShortURL: "a1", OriginalURL: "https://example.com", UserID: "user1"},
+				{ShortURL: "a2", OriginalURL: "https://example.org", UserID: "user1"},
+				{ShortURL: "a3", OriginalURL: "https://example.net", UserID: "user1"},
+			},
+			wantURLs:  3,
+			wantUsers: 1,
+		},
+		{
+			name: "multiple urls different users",
+			records: []*model.ShortURL{
+				{ShortURL: "a1", OriginalURL: "https://example.com", UserID: "user1"},
+				{ShortURL: "a2", OriginalURL: "https://example.org", UserID: "user2"},
+				{ShortURL: "a3", OriginalURL: "https://example.net", UserID: "user1"},
+			},
+			wantURLs:  3,
+			wantUsers: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := repository.NewMemStorage()
+			ctx := context.Background()
+			for _, r := range tt.records {
+				if err := s.Create(ctx, r); err != nil {
+					t.Fatalf("Create failed: %v", err)
+				}
+			}
+			gotURLs, gotUsers, err := s.Stats(ctx)
+			if err != nil {
+				t.Fatalf("Stats returned error: %v", err)
+			}
+			if gotURLs != tt.wantURLs {
+				t.Errorf("urlCount = %d, want %d", gotURLs, tt.wantURLs)
+			}
+			if gotUsers != tt.wantUsers {
+				t.Errorf("userCount = %d, want %d", gotUsers, tt.wantUsers)
+			}
+		})
+	}
+}

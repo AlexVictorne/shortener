@@ -38,6 +38,8 @@ type Storage interface {
 	Close() error
 	// BatchMarkDeleted помечает указанные короткие URL как удалённые для заданного пользователя.
 	BatchMarkDeleted(ctx context.Context, userID string, shortURLs []string) error
+	// Stats возвращает общее количество коротких URL и уникальных пользователей в хранилище.
+	Stats(ctx context.Context) (urlCount int, userCount int, err error)
 }
 
 // MemStorage — потокобезопасное in-memory хранилище с тремя индексами:
@@ -99,6 +101,13 @@ func (s *MemStorage) LoadFromFile(filePath string) error {
 	}
 	s.ImportAll(urls)
 	return nil
+}
+
+// Stats возвращает количество коротких URL и уникальных пользователей в MemStorage.
+func (s *MemStorage) Stats(_ context.Context) (int, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.urls), len(s.userIndex), nil
 }
 
 func (s *MemStorage) BatchMarkDeleted(ctx context.Context, userID string, shortURLs []string) error {

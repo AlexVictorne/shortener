@@ -34,6 +34,9 @@ type Config struct {
 	TLSCertFile string
 	// TLSKeyFile — путь к PEM-файлу приватного ключа TLS; флаг -tls-key / env TLS_KEY_FILE.
 	TLSKeyFile string
+	// TrustedSubnet — строковое представление CIDR доверенной подсети для эндпоинта /api/internal/stats;
+	// флаг -t / env TRUSTED_SUBNET. Пустое значение запрещает любой доступ к эндпоинту.
+	TrustedSubnet string
 }
 
 // fileConfig содержит параметры конфигурации из JSON-файла.
@@ -60,6 +63,8 @@ type fileConfig struct {
 	TLSCertFile *string `json:"tls_cert_file"`
 	// TLSKeyFile — путь к PEM-ключу; аналог TLS_KEY_FILE / -tls-key.
 	TLSKeyFile *string `json:"tls_key_file"`
+	// TrustedSubnet — CIDR доверенной подсети; аналог TRUSTED_SUBNET / -t.
+	TrustedSubnet *string `json:"trusted_subnet"`
 }
 
 // loadFileConfig читает и разбирает JSON-файл конфигурации по заданному пути.
@@ -123,33 +128,35 @@ func LoadConfig() *Config {
 
 	// Имена флагов командной строки
 	const (
-		flagNameConfigFile  = "c"
-		flagNameConfigFile2 = "config"
-		flagNameServerURL   = "a"
-		flagNameBaseURL     = "b"
-		flagNameFileStorage = "f"
-		flagNameDatabaseDSN = "d"
-		flagNameAuthSecret  = "s"
-		flagNameAuditFile   = "audit-file"
-		flagNameAuditURL    = "audit-url"
-		flagNameEnableHTTPS = "tls"
-		flagNameTLSCert     = "tls-cert"
-		flagNameTLSKey      = "tls-key"
+		flagNameConfigFile    = "c"
+		flagNameConfigFile2   = "config"
+		flagNameServerURL     = "a"
+		flagNameBaseURL       = "b"
+		flagNameFileStorage   = "f"
+		flagNameDatabaseDSN   = "d"
+		flagNameAuthSecret    = "s"
+		flagNameAuditFile     = "audit-file"
+		flagNameAuditURL      = "audit-url"
+		flagNameEnableHTTPS   = "tls"
+		flagNameTLSCert       = "tls-cert"
+		flagNameTLSKey        = "tls-key"
+		flagNameTrustedSubnet = "t"
 	)
 
 	// Имена переменных окружения
 	const (
-		envNameConfig      = "CONFIG"
-		envNameServerURL   = "SERVER_ADDRESS"
-		envNameBaseURL     = "BASE_URL"
-		envNameFileStorage = "FILE_STORAGE_PATH"
-		envNameDatabaseDSN = "DATABASE_DSN"
-		envNameAuthSecret  = "AUTH_SECRET"
-		envNameAuditFile   = "AUDIT_FILE"
-		envNameAuditURL    = "AUDIT_URL"
-		envNameEnableHTTPS = "ENABLE_HTTPS"
-		envNameTLSCert     = "TLS_CERT_FILE"
-		envNameTLSKey      = "TLS_KEY_FILE"
+		envNameConfig        = "CONFIG"
+		envNameServerURL     = "SERVER_ADDRESS"
+		envNameBaseURL       = "BASE_URL"
+		envNameFileStorage   = "FILE_STORAGE_PATH"
+		envNameDatabaseDSN   = "DATABASE_DSN"
+		envNameAuthSecret    = "AUTH_SECRET"
+		envNameAuditFile     = "AUDIT_FILE"
+		envNameAuditURL      = "AUDIT_URL"
+		envNameEnableHTTPS   = "ENABLE_HTTPS"
+		envNameTLSCert       = "TLS_CERT_FILE"
+		envNameTLSKey        = "TLS_KEY_FILE"
+		envNameTrustedSubnet = "TRUSTED_SUBNET"
 	)
 
 	// Определяем флаги командной строки
@@ -165,6 +172,7 @@ func LoadConfig() *Config {
 	flagEnableHTTPS := flag.Bool(flagNameEnableHTTPS, false, "enable HTTPS mode")
 	flagTLSCert := flag.String(flagNameTLSCert, "", "path to TLS certificate PEM file")
 	flagTLSKey := flag.String(flagNameTLSKey, "", "path to TLS private key PEM file")
+	flagTrustedSubnet := flag.String(flagNameTrustedSubnet, "", "trusted subnet CIDR for /api/internal/stats")
 	flag.Parse()
 
 	// Определяем, какие булевые флаги были явно переданы пользователем
@@ -199,6 +207,7 @@ func LoadConfig() *Config {
 	envEnableHTTPS := os.Getenv(envNameEnableHTTPS)
 	envTLSCert := os.Getenv(envNameTLSCert)
 	envTLSKey := os.Getenv(envNameTLSKey)
+	envTrustedSubnet := os.Getenv(envNameTrustedSubnet)
 
 	// Если файл конфигурации не задан, используем пустую структуру для упрощения кода ниже
 	if fc == nil {
@@ -216,5 +225,6 @@ func LoadConfig() *Config {
 		EnableHTTPS:     resolveBool(envEnableHTTPS, *flagEnableHTTPS, explicitFlags[flagNameEnableHTTPS], fc.EnableHTTPS, false),
 		TLSCertFile:     resolveString(envTLSCert, *flagTLSCert, fc.TLSCertFile, ""),
 		TLSKeyFile:      resolveString(envTLSKey, *flagTLSKey, fc.TLSKeyFile, ""),
+		TrustedSubnet:   resolveString(envTrustedSubnet, *flagTrustedSubnet, fc.TrustedSubnet, ""),
 	}
 }

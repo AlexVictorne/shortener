@@ -74,6 +74,7 @@ func main() {
 	handlerOpts := []options.OptHandlerOptionsSetter{
 		options.WithAuthSecret(cfg.AuthSecret),
 		options.WithAuditor(auditor),
+		options.WithTrustedSubnet(cfg.TrustedSubnet),
 	}
 	if pgStore != nil {
 		handlerOpts = append(handlerOpts, options.WithPinger(pgStore))

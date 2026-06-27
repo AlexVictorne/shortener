@@ -321,3 +321,8 @@ func (s *TrimmerService) MarkURLsDeleted(ctx context.Context, userID string, sho
 	}()
 	return nil
 }
+
+// Stats возвращает количество сокращенных URL и уникальных пользователей из хранилища.
+func (s *TrimmerService) Stats(ctx context.Context) (int, int, error) {
+	return s.storage.Stats(ctx)
+}

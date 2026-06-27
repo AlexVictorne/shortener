@@ -29,6 +29,12 @@ func WithAuditor(opt interface{}) OptHandlerOptionsSetter {
 	return func(o *HandlerOptions) { o.Auditor = opt }
 }
 
+// TrustedSubnet — строковый CIDR доверенной подсети для эндпоинта /api/internal/stats.
+// Пустое значение запрещает доступ к эндпоинту для любых запросов.
+func WithTrustedSubnet(opt string) OptHandlerOptionsSetter {
+	return func(o *HandlerOptions) { o.TrustedSubnet = opt }
+}
+
 func (o *HandlerOptions) Validate() error {
 	return nil
 }
