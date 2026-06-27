@@ -155,7 +155,10 @@ func TestRun_InFlightRequestCompletes(t *testing.T) {
 
 	// Отправляем медленный запрос
 	go func() {
-		http.Get("http://" + addr + "/slow") //nolint:errcheck,noctx
+		resp, err := http.Get("http://" + addr + "/slow") //nolint:noctx
+		if err == nil {
+			resp.Body.Close()
+		}
 	}()
 
 	// Ждем начала обработки запроса, затем отправляем сигнал завершения
