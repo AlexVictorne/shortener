@@ -107,9 +107,9 @@ func main() {
 	errChan := make(chan error, 1)
 
 	go func() {
-		log.Printf("Server starting on %s", serverAddr.String())
+		log.Printf("Server starting on %s (HTTPS: %v)", serverAddr.String(), cfg.EnableHTTPS)
 		log.Printf("Result link direct to: %s", cfg.ResultURL)
-		err := server.ListenAndServe()
+		err := listenAndServe(server, cfg)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errChan <- err
 		} else {

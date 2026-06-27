@@ -5,6 +5,7 @@ package config
 import (
 	"flag"
 	"os"
+	"strconv"
 )
 
 // Config хранит все параметры конфигурации сервиса.
@@ -24,6 +25,12 @@ type Config struct {
 	AuditFile string
 	// AuditURL — URL удалённого приёмника аудит-событий (HTTP POST); флаг -audit-url / env AUDIT_URL.
 	AuditURL string
+	// EnableHTTPS — включает режим HTTPS; флаг -tls / env ENABLE_HTTPS.
+	EnableHTTPS bool
+	// TLSCertFile — путь к PEM-файлу сертификата TLS; флаг -tls-cert / env TLS_CERT_FILE.
+	TLSCertFile string
+	// TLSKeyFile — путь к PEM-файлу приватного ключа TLS; флаг -tls-key / env TLS_KEY_FILE.
+	TLSKeyFile string
 }
 
 // LoadConfig читает конфигурацию из окружения и флагов командной строки.
@@ -46,6 +53,12 @@ func LoadConfig() *Config {
 	envNameAuditFile := "AUDIT_FILE"
 	flagNameAuditURL := "audit-url"
 	envNameAuditURL := "AUDIT_URL"
+	flagNameEnableHTTPS := "tls"
+	envNameEnableHTTPS := "ENABLE_HTTPS"
+	flagNameTLSCert := "tls-cert"
+	envNameTLSCert := "TLS_CERT_FILE"
+	flagNameTLSKey := "tls-key"
+	envNameTLSKey := "TLS_KEY_FILE"
 
 	var serverURL string
 	var resultURL string
@@ -62,6 +75,9 @@ func LoadConfig() *Config {
 	envAuthSecret := os.Getenv(envNameAuthSecret)
 	envAuditFile := os.Getenv(envNameAuditFile)
 	envAuditURL := os.Getenv(envNameAuditURL)
+	envEnableHTTPS := os.Getenv(envNameEnableHTTPS)
+	envTLSCert := os.Getenv(envNameTLSCert)
+	envTLSKey := os.Getenv(envNameTLSKey)
 
 	flagServerURL := flag.String(flagNameServerURL, "", "server base url")
 	flagResultURL := flag.String(flagNameBaseURL, "", "server result url")
@@ -70,6 +86,9 @@ func LoadConfig() *Config {
 	flagAuthSecret := flag.String(flagNameAuthSecret, "", "auth secret for cookies")
 	flagAuditFile := flag.String(flagNameAuditFile, "", "path to audit log file")
 	flagAuditURL := flag.String(flagNameAuditURL, "", "URL of remote audit receiver")
+	flagEnableHTTPS := flag.Bool(flagNameEnableHTTPS, false, "enable HTTPS mode")
+	flagTLSCert := flag.String(flagNameTLSCert, "", "path to TLS certificate PEM file")
+	flagTLSKey := flag.String(flagNameTLSKey, "", "path to TLS private key PEM file")
 	flag.Parse()
 
 	// Приоритет env > flag > default
@@ -123,6 +142,28 @@ func LoadConfig() *Config {
 		auditURL = *flagAuditURL
 	}
 
+	// Определяем значение EnableHTTPS: env имеет приоритет над флагом
+	var enableHTTPS bool
+	if envEnableHTTPS != "" {
+		enableHTTPS, _ = strconv.ParseBool(envEnableHTTPS)
+	} else {
+		enableHTTPS = *flagEnableHTTPS
+	}
+
+	var tlsCertFile string
+	if envTLSCert != "" {
+		tlsCertFile = envTLSCert
+	} else {
+		tlsCertFile = *flagTLSCert
+	}
+
+	var tlsKeyFile string
+	if envTLSKey != "" {
+		tlsKeyFile = envTLSKey
+	} else {
+		tlsKeyFile = *flagTLSKey
+	}
+
 	return &Config{
 		BaseURL:         serverURL,
 		ResultURL:       resultURL,
@@ -131,5 +172,8 @@ func LoadConfig() *Config {
 		AuthSecret:      authSecret,
 		AuditFile:       auditFile,
 		AuditURL:        auditURL,
+		EnableHTTPS:     enableHTTPS,
+		TLSCertFile:     tlsCertFile,
+		TLSKeyFile:      tlsKeyFile,
 	}
 }
