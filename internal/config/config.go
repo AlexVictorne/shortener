@@ -37,6 +37,9 @@ type Config struct {
 	// TrustedSubnet — строковое представление CIDR доверенной подсети для эндпоинта /api/internal/stats;
 	// флаг -t / env TRUSTED_SUBNET. Пустое значение запрещает любой доступ к эндпоинту.
 	TrustedSubnet string
+	// GRPCAddress — адрес gRPC-сервера (например, ":3200"); флаг -grpc-addr / env GRPC_ADDRESS.
+	// Пустое значение означает, что gRPC-сервер не запускается.
+	GRPCAddress string
 }
 
 // fileConfig содержит параметры конфигурации из JSON-файла.
@@ -65,6 +68,8 @@ type fileConfig struct {
 	TLSKeyFile *string `json:"tls_key_file"`
 	// TrustedSubnet — CIDR доверенной подсети; аналог TRUSTED_SUBNET / -t.
 	TrustedSubnet *string `json:"trusted_subnet"`
+	// GRPCAddress — адрес gRPC-сервера; аналог GRPC_ADDRESS / -grpc-addr.
+	GRPCAddress *string `json:"grpc_address"`
 }
 
 // loadFileConfig читает и разбирает JSON-файл конфигурации по заданному пути.
@@ -141,6 +146,7 @@ func LoadConfig() *Config {
 		flagNameTLSCert       = "tls-cert"
 		flagNameTLSKey        = "tls-key"
 		flagNameTrustedSubnet = "t"
+		flagNameGRPCAddress   = "grpc-addr"
 	)
 
 	// Имена переменных окружения
@@ -157,6 +163,7 @@ func LoadConfig() *Config {
 		envNameTLSCert       = "TLS_CERT_FILE"
 		envNameTLSKey        = "TLS_KEY_FILE"
 		envNameTrustedSubnet = "TRUSTED_SUBNET"
+		envNameGRPCAddress   = "GRPC_ADDRESS"
 	)
 
 	// Определяем флаги командной строки
@@ -173,6 +180,7 @@ func LoadConfig() *Config {
 	flagTLSCert := flag.String(flagNameTLSCert, "", "path to TLS certificate PEM file")
 	flagTLSKey := flag.String(flagNameTLSKey, "", "path to TLS private key PEM file")
 	flagTrustedSubnet := flag.String(flagNameTrustedSubnet, "", "trusted subnet CIDR for /api/internal/stats")
+	flagGRPCAddress := flag.String(flagNameGRPCAddress, "", "gRPC server address (e.g. :3200); empty disables gRPC")
 	flag.Parse()
 
 	// Определяем, какие булевые флаги были явно переданы пользователем
@@ -208,6 +216,7 @@ func LoadConfig() *Config {
 	envTLSCert := os.Getenv(envNameTLSCert)
 	envTLSKey := os.Getenv(envNameTLSKey)
 	envTrustedSubnet := os.Getenv(envNameTrustedSubnet)
+	envGRPCAddress := os.Getenv(envNameGRPCAddress)
 
 	// Если файл конфигурации не задан, используем пустую структуру для упрощения кода ниже
 	if fc == nil {
@@ -226,5 +235,6 @@ func LoadConfig() *Config {
 		TLSCertFile:     resolveString(envTLSCert, *flagTLSCert, fc.TLSCertFile, ""),
 		TLSKeyFile:      resolveString(envTLSKey, *flagTLSKey, fc.TLSKeyFile, ""),
 		TrustedSubnet:   resolveString(envTrustedSubnet, *flagTrustedSubnet, fc.TrustedSubnet, ""),
+		GRPCAddress:     resolveString(envGRPCAddress, *flagGRPCAddress, fc.GRPCAddress, ""),
 	}
 }

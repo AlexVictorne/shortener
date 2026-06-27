@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"net/url"
@@ -13,10 +14,13 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/rs/zerolog"
+	"google.golang.org/grpc"
 
 	"shortener/internal/config"
+	"shortener/internal/grpchandler"
 	"shortener/internal/handler"
 	"shortener/internal/handler/options"
+	"shortener/internal/pb"
 	"shortener/internal/repository"
 	"shortener/internal/service"
 	"shortener/pkg/audit"
@@ -101,6 +105,23 @@ func main() {
 		}
 	}()
 
+	// Запускаем gRPC-сервер, если задан адрес в конфигурации.
+	var grpcSrv *grpc.Server
+	if cfg.GRPCAddress != "" {
+		lis, err := net.Listen("tcp", cfg.GRPCAddress)
+		if err != nil {
+			log.Fatalf("gRPC listen error: %v", err)
+		}
+		grpcSrv = grpc.NewServer()
+		pb.RegisterShortenerServiceServer(grpcSrv, grpchandler.NewServer(service, cfg.AuthSecret))
+		go func() {
+			log.Printf("Starting gRPC server on %s", cfg.GRPCAddress)
+			if err := grpcSrv.Serve(lis); err != nil {
+				log.Printf("gRPC server error: %v", err)
+			}
+		}()
+	}
+
 	// Перехватываем SIGINT, SIGTERM и SIGQUIT для корректного завершения
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	defer stop()
@@ -108,6 +129,10 @@ func main() {
 	// onShutdown вызывается гарантированно при любом завершении сервера:
 	// сохраняет данные и освобождает ресурсы
 	onShutdown := func() {
+		if grpcSrv != nil {
+			log.Println("Stopping gRPC server...")
+			grpcSrv.GracefulStop()
+		}
 		store.Close()
 		auditor.Close()
 	}
