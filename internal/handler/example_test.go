@@ -22,8 +22,8 @@ import (
 
 const exampleSecret = "example-secret"
 
-// req_ctx_with_user возвращает контекст с произвольным userID для прямых вызовов сервиса в примерах.
-func req_ctx_with_user() context.Context { //nolint:revive
+// reqCtxWithUser возвращает контекст с произвольным userID для прямых вызовов сервиса в примерах.
+func reqCtxWithUser() context.Context { //nolint:revive
 	return context.WithValue(context.Background(), middleware.UserIDKey, "example-user")
 }
 
@@ -124,7 +124,7 @@ func Example_redirectHandler() {
 	h, svc := newExampleHandler()
 
 	// Сначала сокращаем URL, чтобы получить короткий идентификатор.
-	shortFull, _ := svc.TrimURL(req_ctx_with_user(), "https://example.com/redirect-target")
+	shortFull, _ := svc.TrimURL(reqCtxWithUser(), "https://example.com/redirect-target")
 	id := shortFull[len("http://localhost:8080/"):]
 
 	mux := chi.NewRouter()
