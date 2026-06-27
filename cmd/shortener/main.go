@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -21,11 +22,14 @@ import (
 	"shortener/internal/repository"
 	"shortener/internal/service"
 	"shortener/pkg/audit"
+	"shortener/pkg/buildinfo"
 	"shortener/pkg/generator"
 	"shortener/pkg/validator"
 )
 
 func main() {
+	fmt.Println(buildinfo.String())
+
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	zerolog.TimeFieldFormat = time.RFC3339Nano
 
