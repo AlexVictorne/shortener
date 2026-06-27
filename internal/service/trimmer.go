@@ -1,3 +1,6 @@
+// Package service содержит бизнес-логику сервиса сокращения ссылок.
+// Основной тип — TrimmerService, который валидирует, нормализует и сохраняет URL,
+// а также предоставляет операции поиска и пакетного удаления.
 package service
 
 import (
@@ -15,17 +18,27 @@ import (
 )
 
 var (
-	ErrNoContent             = errors.New("no content")
-	ErrConflict              = errors.New("conflict")
-	ErrURLEmpty              = errors.New("url is empty")
-	ErrURLTooLong            = errors.New("url is too long")
-	ErrURLInvalidFormat      = errors.New("invalid url format")
-	ErrURLInvalidScheme      = errors.New("url must start with http or https")
-	ErrURLNoHost             = errors.New("url must have host")
-	ErrBatchItemEmpty        = errors.New("empty original_url or correlation_id")
+	// ErrNoContent возвращается, когда для пользователя не найдено ни одного URL.
+	ErrNoContent = errors.New("no content")
+	// ErrConflict возвращается, когда оригинальный URL уже существует в хранилище.
+	ErrConflict = errors.New("conflict")
+	// ErrURLEmpty возвращается, когда переданный URL пуст или состоит только из пробелов.
+	ErrURLEmpty = errors.New("url is empty")
+	// ErrURLTooLong возвращается, когда длина URL превышает 2048 символов.
+	ErrURLTooLong = errors.New("url is too long")
+	// ErrURLInvalidFormat возвращается, когда URL не поддаётся разбору.
+	ErrURLInvalidFormat = errors.New("invalid url format")
+	// ErrURLInvalidScheme возвращается, когда схема URL отличается от http или https.
+	ErrURLInvalidScheme = errors.New("url must start with http or https")
+	// ErrURLNoHost возвращается, когда в URL отсутствует хост.
+	ErrURLNoHost = errors.New("url must have host")
+	// ErrBatchItemEmpty возвращается, когда элемент пакета содержит пустой original_url или correlation_id.
+	ErrBatchItemEmpty = errors.New("empty original_url or correlation_id")
+	// ErrInvalidShortURLFormat возвращается, когда короткий URL имеет неверный формат.
 	ErrInvalidShortURLFormat = errors.New("invalid short url format")
 )
 
+// TrimmerService реализует бизнес-логику: валидацию, нормализацию, генерацию и хранение коротких URL.
 type TrimmerService struct {
 	storage    repository.Storage
 	generator  generator.IDGenerator
@@ -33,6 +46,8 @@ type TrimmerService struct {
 	basePrefix string
 }
 
+// NewTrimmerService создаёт TrimmerService с переданными хранилищем, генератором ID и базовым URL.
+// baseURL используется как префикс при построении коротких ссылок (например, "http://localhost:8080/").
 func NewTrimmerService(
 	storage repository.Storage,
 	generator generator.IDGenerator,
@@ -46,6 +61,9 @@ func NewTrimmerService(
 	}
 }
 
+// TrimURL валидирует, нормализует originalURL, генерирует короткий идентификатор и сохраняет запись.
+// Возвращает полный короткий URL (с baseURL-префиксом) или ошибку.
+// При конфликте (URL уже существует) дополнительно возвращает ErrConflict вместе с существующим коротким URL.
 func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (string, error) {
 	normalizedURL, err := s.validateAndNormalize(originalURL)
 	if err != nil {
@@ -92,8 +110,11 @@ func (s *TrimmerService) checkIDExists(ctx context.Context, shortID string) (boo
 	return true, nil
 }
 
+// ErrURLDeleted возвращается, когда короткий URL был мягко удалён.
 var ErrURLDeleted = errors.New("url deleted")
 
+// GetOriginalURL разрешает короткий идентификатор или полный короткий URL в оригинальный URL.
+// Возвращает ErrURLDeleted, если запись помечена удалённой, или ErrNotFound, если id не найден.
 func (s *TrimmerService) GetOriginalURL(ctx context.Context, shortURL string) (string, error) {
 	shortID, err := extractID(shortURL)
 	if err != nil {
@@ -161,6 +182,9 @@ func extractID(shortURL string) (string, error) {
 	return parts[len(parts)-1], nil
 }
 
+// BatchShorten принимает список элементов BatchRequestItem, сокращает каждый URL
+// (повторно использует существующий короткий ID при конфликте) и возвращает
+// список BatchResponseItem с теми же CorrelationID.
 func (s *TrimmerService) BatchShorten(ctx context.Context, req []model.BatchRequestItem) ([]model.BatchResponseItem, error) {
 	var userID string
 	if v := ctx.Value("userID"); v != nil {
@@ -212,26 +236,35 @@ func (s *TrimmerService) BatchShorten(ctx context.Context, req []model.BatchRequ
 	return resp, nil
 }
 
+// BuildShortURL формирует полный короткий URL из короткого идентификатора, добавляя baseURL-префикс.
 func (s *TrimmerService) BuildShortURL(id string) string {
 	return s.buildShortURL(id)
 }
 
+// ValidateURL проверяет, что rawURL является валидным http/https URL с непустым хостом и длиной ≤ 2048.
 func (s *TrimmerService) ValidateURL(rawURL string) error {
 	return s.validateURL(rawURL)
 }
 
+// NormalizeURL приводит rawURL к нормализованной форме: схема и хост в нижнем регистре,
+// стандартные порты (80/443) убираются, фрагмент удаляется.
 func (s *TrimmerService) NormalizeURL(rawURL string) (string, error) {
 	return s.normalizeURL(rawURL)
 }
 
+// GetByOriginal ищет запись по нормализованному оригинальному URL.
+// Возвращает repository.ErrNotFound, если запись не найдена.
 func (s *TrimmerService) GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error) {
 	return s.storage.GetByOriginal(ctx, originalURL)
 }
 
+// GenerateID делегирует генерацию нового уникального короткого идентификатора генератору.
 func (s *TrimmerService) GenerateID() (string, error) {
 	return s.generator.GenerateID()
 }
 
+// GetURLsByUser возвращает все ненулевые URL, принадлежащие пользователю userID.
+// Возвращает ErrNoContent, если у пользователя нет сохранённых записей.
 func (s *TrimmerService) GetURLsByUser(ctx context.Context, userID string) ([]model.UserURLResponse, error) {
 	urls, err := s.storage.GetByUserID(ctx, userID)
 	if err != nil {
@@ -250,6 +283,9 @@ func (s *TrimmerService) GetURLsByUser(ctx context.Context, userID string) ([]mo
 	return resp, nil
 }
 
+// MarkURLsDeleted асинхронно помечает переданные короткие идентификаторы как удалённые для userID.
+// Метод возвращается немедленно; фактическое обновление хранилища происходит в фоновых горутинах
+// с использованием паттерна fan-out/fan-in с размером чанка 100.
 func (s *TrimmerService) MarkURLsDeleted(ctx context.Context, userID string, shortURLs []string) error {
 	const chunkSize = 100
 	if len(shortURLs) == 0 {

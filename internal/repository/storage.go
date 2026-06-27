@@ -1,3 +1,5 @@
+// Package repository предоставляет интерфейс Storage и его реализации:
+// MemStorage (in-memory с опциональной файловой персистентностью) и PgStorage (PostgreSQL).
 package repository
 
 import (
@@ -13,21 +15,34 @@ import (
 )
 
 var (
+	// ErrNotFound возвращается, когда запись с указанным идентификатором не найдена в хранилище.
 	ErrNotFound = errors.New("not found")
+	// ErrConflict возвращается при попытке создать запись с уже существующим коротким или оригинальным URL.
 	ErrConflict = errors.New("conflict")
 )
 
+// Storage — общий интерфейс хранилища коротких URL.
+// Реализуется MemStorage (in-memory) и PgStorage (PostgreSQL).
 type Storage interface {
+	// Create сохраняет новую запись. Возвращает ErrConflict при дублировании.
 	Create(ctx context.Context, url *model.ShortURL) error
+	// BatchCreate атомарно сохраняет несколько записей.
 	BatchCreate(ctx context.Context, urls []*model.ShortURL) error
+	// Get возвращает запись по короткому идентификатору. Возвращает ErrNotFound, если не найдена.
 	Get(ctx context.Context, shortURL string) (*model.ShortURL, error)
+	// GetByOriginal возвращает запись по нормализованному оригинальному URL.
 	GetByOriginal(ctx context.Context, originalURL string) (*model.ShortURL, error)
+	// GetByUserID возвращает все записи, принадлежащие пользователю.
 	GetByUserID(ctx context.Context, userID string) ([]*model.ShortURL, error)
-
+	// Close освобождает ресурсы и при необходимости персистирует данные на диск.
 	Close() error
+	// BatchMarkDeleted помечает указанные короткие URL как удалённые для заданного пользователя.
 	BatchMarkDeleted(ctx context.Context, userID string, shortURLs []string) error
 }
 
+// MemStorage — потокобезопасное in-memory хранилище с тремя индексами:
+// по короткому URL, по оригинальному URL и по идентификатору пользователя.
+// При наличии filePath автоматически персистирует данные на диск при закрытии.
 type MemStorage struct {
 	mu        sync.RWMutex
 	urls      map[string]*model.ShortURL // key: shortURL
@@ -38,6 +53,7 @@ type MemStorage struct {
 	filePath string
 }
 
+// ExportAll возвращает снимок всех записей хранилища для сериализации.
 func (s *MemStorage) ExportAll() []model.ShortURL {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -49,6 +65,7 @@ func (s *MemStorage) ExportAll() []model.ShortURL {
 	return result
 }
 
+// ImportAll полностью заменяет содержимое хранилища переданными записями и перестраивает индексы.
 func (s *MemStorage) ImportAll(urls []model.ShortURL) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,10 +85,12 @@ func (s *MemStorage) ImportAll(urls []model.ShortURL) {
 	}
 }
 
+// SaveToFile сериализует все записи хранилища в JSON и записывает в указанный файл.
 func (s *MemStorage) SaveToFile(filePath string) error {
 	return filestorage.SaveToFile(s.ExportAll(), filePath)
 }
 
+// LoadFromFile читает JSON-файл и загружает записи в хранилище через ImportAll.
 func (s *MemStorage) LoadFromFile(filePath string) error {
 	var urls []model.ShortURL
 	err := filestorage.LoadFromFile(filePath, &urls)
@@ -94,6 +113,7 @@ func (s *MemStorage) BatchMarkDeleted(ctx context.Context, userID string, shortU
 	return nil
 }
 
+// NewMemStorage создаёт пустое in-memory хранилище без файловой персистентности.
 func NewMemStorage() *MemStorage {
 	return &MemStorage{
 		urls:      make(map[string]*model.ShortURL),
@@ -104,6 +124,8 @@ func NewMemStorage() *MemStorage {
 	}
 }
 
+// NewMemStorageWithFile создаёт хранилище с файловой персистентностью.
+// Если файл уже существует, данные из него загружаются при инициализации.
 func NewMemStorageWithFile(filePath string) (*MemStorage, error) {
 	s := NewMemStorage()
 	s.filePath = filePath

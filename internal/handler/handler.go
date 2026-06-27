@@ -1,3 +1,14 @@
+// Package handler реализует HTTP-слой сервиса сокращения ссылок.
+// Связывает TrimmerService, middleware аутентификации, аудит-логирование
+// и Chi-роутер, предоставляя следующие эндпоинты:
+//
+//	POST /                   — сократить URL (тело text/plain)
+//	POST /api/shorten        — сократить URL (тело JSON)
+//	POST /api/shorten/batch  — пакетное сокращение URL
+//	GET  /{id}               — перенаправление на оригинальный URL
+//	GET  /api/user/urls      — список URL текущего пользователя
+//	DELETE /api/user/urls    — мягкое удаление коротких ссылок
+//	GET  /ping               — проверка доступности хранилища
 package handler
 
 import (
@@ -19,10 +30,14 @@ import (
 	"shortener/internal/handler/options"
 )
 
+// Pinger реализуется любым бэкендом хранилища, способным проверить собственную доступность.
+// PgStorage удовлетворяет этому интерфейсу; MemStorage не требует отдельного пинга.
 type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// Handler хранит зависимости, необходимые для обработки HTTP-запросов.
+// Создавайте экземпляры через NewHandler; не конструируйте структуру напрямую.
 type Handler struct {
 	service    *service.TrimmerService
 	pinger     Pinger
@@ -30,6 +45,8 @@ type Handler struct {
 	auditor    audit.Auditor
 }
 
+// NewHandler создаёт Handler с переданным TrimmerService и функциональными опциями.
+// Доступные опции: options.WithAuthSecret, options.WithPinger, options.WithAuditor.
 func NewHandler(service *service.TrimmerService, opts ...options.OptHandlerOptionsSetter) *Handler {
 	optsStruct := options.NewHandlerOptions(opts...)
 	h := &Handler{
@@ -63,6 +80,10 @@ func (h *Handler) emitAudit(ctx context.Context, action, userID, url string) {
 	}
 }
 
+// ShortenURLHandler обрабатывает POST / с телом text/plain, содержащим оригинальный URL.
+// При успехе отвечает 201 Created с коротким URL в виде обычного текста.
+// Если URL уже был сокращён, отвечает 409 Conflict, но всё равно возвращает
+// существующий короткий URL, чтобы вызывающая сторона могла его использовать.
 func (h *Handler) ShortenURLHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Content-Type") != "text/plain" {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -111,7 +132,10 @@ type shortenResponse struct {
 	Result string `json:"result"`
 }
 
-// ShortenURLJSONHandler handles POST /api/shorten with JSON body {"url": "..."}
+// ShortenURLJSONHandler обрабатывает POST /api/shorten с JSON-телом {"url": "…"}.
+// При успехе отвечает 201 Created с телом {"result": "<short_url>"}.
+// При дублировании URL возвращает 409 Conflict с тем же JSON-телом,
+// чтобы вызывающая сторона всё равно получила короткий URL.
 func (h *Handler) ShortenURLJSONHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Content-Type") != "application/json" {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -155,6 +179,10 @@ func (h *Handler) ShortenURLJSONHandler(w http.ResponseWriter, r *http.Request) 
 	json.NewEncoder(w).Encode(resp)
 }
 
+// GetUserURLsHandler обрабатывает GET /api/user/urls.
+// Требует валидную auth-куку; при её отсутствии возвращает 401 Unauthorized.
+// Отвечает 200 OK с JSON-массивом [{"short_url":…,"original_url":…}]
+// или 204 No Content, если у пользователя нет сохранённых URL.
 func (h *Handler) GetUserURLsHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok || userID == "" {
@@ -175,6 +203,9 @@ func (h *Handler) GetUserURLsHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(urls)
 }
 
+// RedirectHandler обрабатывает GET /{id}.
+// Разрешает короткий идентификатор в оригинальный URL и выполняет 307 Temporary Redirect.
+// Возвращает 410 Gone, если URL был мягко удалён, или 404 Not Found, если id неизвестен.
 func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 	// extract id
 	var id string
@@ -205,14 +236,19 @@ func (h *Handler) RedirectHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, originalURL, http.StatusTemporaryRedirect)
 }
 
+// NotFoundHandler — резервный обработчик 404, зарегистрированный в Chi-роутере.
 func (h *Handler) NotFoundHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 }
 
+// MethodNotAllowedHandler — обработчик 405, зарегистрированный в Chi-роутере.
 func (h *Handler) MethodNotAllowedHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 }
 
+// PingHandler обрабатывает GET /ping и проверяет доступность хранилища.
+// Возвращает 200 OK при успехе или 500 Internal Server Error при ошибке соединения
+// либо если Pinger не задан (используется MemStorage без PostgreSQL).
 func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 	if h.pinger == nil {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -225,6 +261,9 @@ func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// DeleteUserURLsHandler обрабатывает DELETE /api/user/urls.
+// Принимает JSON-массив коротких идентификаторов и запускает асинхронное мягкое удаление.
+// Немедленно отвечает 202 Accepted; фактическое удаление происходит в фоне.
 func (h *Handler) DeleteUserURLsHandler(w http.ResponseWriter, r *http.Request) {
 	userID, ok := middleware.UserIDFromContext(r.Context())
 	if !ok || userID == "" {
@@ -241,6 +280,8 @@ func (h *Handler) DeleteUserURLsHandler(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// SetupRoutes регистрирует все маршруты и middleware в переданном Chi-роутере.
+// Порядок middleware: RequestResponseLogger → GzipMiddleware → AuthMiddleware.
 func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Use(middleware.RequestResponseLogger)
 	mux.Use(middleware.GzipMiddleware)
@@ -257,6 +298,9 @@ func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.MethodNotAllowed(h.MethodNotAllowedHandler)
 }
 
+// BatchShortenHandler обрабатывает POST /api/shorten/batch.
+// Принимает JSON-массив объектов BatchRequestItem и возвращает JSON-массив BatchResponseItem.
+// При успехе отвечает 201 Created. Если хотя бы один элемент невалиден, возвращает 400 Bad Request.
 func (h *Handler) BatchShortenHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Content-Type") != "application/json" {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)

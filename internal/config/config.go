@@ -1,3 +1,5 @@
+// Package config загружает конфигурацию сервиса из переменных окружения и флагов командной строки.
+// Приоритет: переменная окружения > флаг > значение по умолчанию.
 package config
 
 import (
@@ -5,16 +7,27 @@ import (
 	"os"
 )
 
+// Config хранит все параметры конфигурации сервиса.
 type Config struct {
-	BaseURL         string
-	ResultURL       string
+	// BaseURL — адрес HTTP-сервера (например, "http://localhost:8080"); флаг -a / env SERVER_ADDRESS.
+	BaseURL string
+	// ResultURL — префикс для генерируемых коротких ссылок; флаг -b / env BASE_URL.
+	ResultURL string
+	// FileStoragePath — путь к JSON-файлу для персистентности MemStorage; флаг -f / env FILE_STORAGE_PATH.
 	FileStoragePath string
-	DatabaseDSN     string
-	AuthSecret      string
-	AuditFile       string
-	AuditURL        string
+	// DatabaseDSN — строка подключения к PostgreSQL; флаг -d / env DATABASE_DSN.
+	// Если не задана, используется MemStorage.
+	DatabaseDSN string
+	// AuthSecret — секрет для подписи auth-куки HMAC-SHA256; флаг -s / env AUTH_SECRET.
+	AuthSecret string
+	// AuditFile — путь к файлу аудит-лога (JSON, один объект на строку); флаг -audit-file / env AUDIT_FILE.
+	AuditFile string
+	// AuditURL — URL удалённого приёмника аудит-событий (HTTP POST); флаг -audit-url / env AUDIT_URL.
+	AuditURL string
 }
 
+// LoadConfig читает конфигурацию из окружения и флагов командной строки.
+// Должна вызываться один раз при старте приложения.
 func LoadConfig() *Config {
 	defaultURL := "http://localhost:8080"
 	defaultFileStorage := "shortener_data.json"
