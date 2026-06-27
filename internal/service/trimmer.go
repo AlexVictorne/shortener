@@ -27,9 +27,10 @@ var (
 )
 
 type TrimmerService struct {
-	storage   repository.Storage
-	generator generator.IDGenerator
-	baseURL   string
+	storage    repository.Storage
+	generator  generator.IDGenerator
+	baseURL    string
+	basePrefix string
 }
 
 func NewTrimmerService(
@@ -38,20 +39,17 @@ func NewTrimmerService(
 	baseURL string,
 ) *TrimmerService {
 	return &TrimmerService{
-		storage:   storage,
-		generator: generator,
-		baseURL:   baseURL,
+		storage:    storage,
+		generator:  generator,
+		baseURL:    baseURL,
+		basePrefix: strings.TrimSuffix(baseURL, "/") + "/",
 	}
 }
 
 func (s *TrimmerService) TrimURL(ctx context.Context, originalURL string) (string, error) {
-	if err := s.validateURL(originalURL); err != nil {
-		return "", err
-	}
-
-	normalizedURL, err := s.normalizeURL(originalURL)
+	normalizedURL, err := s.validateAndNormalize(originalURL)
 	if err != nil {
-		return "", fmt.Errorf("normalization failed %w", err)
+		return "", err
 	}
 
 	shortID, err := s.generator.GenerateID()
@@ -113,50 +111,46 @@ func (s *TrimmerService) GetOriginalURL(ctx context.Context, shortURL string) (s
 }
 
 func (s *TrimmerService) buildShortURL(id string) string {
-	u, err := url.JoinPath(s.baseURL, id)
-	if err != nil {
-		return strings.TrimSuffix(s.baseURL, "/") + "/" + id
-	}
-
-	return u
+	return s.basePrefix + id
 }
 
-func (s *TrimmerService) validateURL(rawURL string) error {
+// validateAndNormalize парсит URL один раз: проверяет корректность и возвращает нормализованную форму.
+func (s *TrimmerService) validateAndNormalize(rawURL string) (string, error) {
 	if strings.TrimSpace(rawURL) == "" {
-		return ErrURLEmpty
+		return "", ErrURLEmpty
 	}
 	if len(rawURL) > 2048 {
-		return ErrURLTooLong
+		return "", ErrURLTooLong
 	}
-	parsed, err := url.ParseRequestURI(rawURL)
-	if err != nil {
-		return ErrURLInvalidFormat
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return ErrURLInvalidScheme
-	}
-	if parsed.Host == "" {
-		return ErrURLNoHost
-	}
-	return nil
-}
-
-func (s *TrimmerService) normalizeURL(rawURL string) (string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return "", err
+		return "", ErrURLInvalidFormat
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", ErrURLInvalidScheme
+	}
+	if parsed.Host == "" {
+		return "", ErrURLNoHost
 	}
 
-	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	parsed.Scheme = scheme
 	parsed.Host = strings.ToLower(parsed.Host)
-
-	if (parsed.Scheme == "http" && parsed.Port() == "80") || (parsed.Scheme == "https" && parsed.Port() == "443") {
+	if (scheme == "http" && parsed.Port() == "80") || (scheme == "https" && parsed.Port() == "443") {
 		parsed.Host = parsed.Hostname()
 	}
-
 	parsed.Fragment = ""
 
 	return parsed.String(), nil
+}
+
+func (s *TrimmerService) validateURL(rawURL string) error {
+	_, err := s.validateAndNormalize(rawURL)
+	return err
+}
+
+func (s *TrimmerService) normalizeURL(rawURL string) (string, error) {
+	return s.validateAndNormalize(rawURL)
 }
 
 func extractID(shortURL string) (string, error) {

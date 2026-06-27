@@ -225,6 +225,8 @@ type spyAuditor struct {
 	calls *[]string
 }
 
+func (s *spyAuditor) Close() error { return nil }
+
 func (s *spyAuditor) Emit(_ context.Context, _ audit.Event) error {
 	*s.calls = append(*s.calls, s.label)
 	return nil
@@ -232,6 +234,7 @@ func (s *spyAuditor) Emit(_ context.Context, _ audit.Event) error {
 
 type errorAuditor struct{ err error }
 
+func (e *errorAuditor) Close() error                                 { return nil }
 func (e *errorAuditor) Emit(_ context.Context, _ audit.Event) error { return e.err }
 
 func readAll(r *http.Request) ([]byte, error) {

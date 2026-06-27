@@ -31,6 +31,8 @@ type mockAuditor struct {
 	events []audit.Event
 }
 
+func (m *mockAuditor) Close() error { return nil }
+
 func (m *mockAuditor) Emit(_ context.Context, e audit.Event) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

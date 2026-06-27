@@ -22,6 +22,8 @@ func NewRemoteAuditor(url string) *RemoteAuditor {
 	}
 }
 
+func (ra *RemoteAuditor) Close() error { return nil }
+
 func (ra *RemoteAuditor) Emit(ctx context.Context, e Event) error {
 	data, err := json.Marshal(e)
 	if err != nil {

@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"os"
@@ -8,19 +9,19 @@ import (
 )
 
 // FileAuditor пишет события аудита в файл (по одному JSON на строку).
+// Файл открывается один раз при создании и закрывается через Close.
 type FileAuditor struct {
-	path string
-	mu   sync.Mutex
+	mu sync.Mutex
+	f  *os.File
+	bw *bufio.Writer
 }
 
 func NewFileAuditor(path string) (*FileAuditor, error) {
-	// Проверяем, что файл доступен для записи (создаем если нет).
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, err
 	}
-	f.Close()
-	return &FileAuditor{path: path}, nil
+	return &FileAuditor{f: f, bw: bufio.NewWriterSize(f, 64*1024)}, nil
 }
 
 func (fa *FileAuditor) Emit(_ context.Context, e Event) error {
@@ -28,17 +29,22 @@ func (fa *FileAuditor) Emit(_ context.Context, e Event) error {
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
 
 	fa.mu.Lock()
 	defer fa.mu.Unlock()
 
-	f, err := os.OpenFile(fa.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
+	fa.bw.Write(data)
+	fa.bw.WriteByte('\n')
+	return fa.bw.Flush()
+}
+
+// Close сбрасывает буфер и закрывает файл.
+func (fa *FileAuditor) Close() error {
+	fa.mu.Lock()
+	defer fa.mu.Unlock()
+
+	if err := fa.bw.Flush(); err != nil {
 		return err
 	}
-	defer f.Close()
-
-	_, err = f.Write(data)
-	return err
+	return fa.f.Close()
 }

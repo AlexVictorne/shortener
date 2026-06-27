@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"net/url"
 	"os"
 	"os/signal"
@@ -65,6 +66,7 @@ func main() {
 	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
 
 	auditor := audit.Build(cfg.AuditFile, cfg.AuditURL)
+	defer auditor.Close()
 
 	handlerOpts := []options.OptHandlerOptionsSetter{
 		options.WithAuthSecret(cfg.AuthSecret),
@@ -87,6 +89,13 @@ func main() {
 		Addr:    serverAddr.Host,
 		Handler: r,
 	}
+
+	go func() {
+		log.Println("pprof server on 127.0.0.1:6060")
+		if err := http.ListenAndServe("127.0.0.1:6060", nil); err != nil {
+			log.Printf("pprof server error: %v", err)
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

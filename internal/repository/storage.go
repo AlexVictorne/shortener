@@ -29,7 +29,7 @@ type Storage interface {
 }
 
 type MemStorage struct {
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	urls      map[string]*model.ShortURL // key: shortURL
 	index     map[string]string          // key: originalURL, value: shortURL
 	userIndex map[string][]string        // key: userID, value: []shortURL
@@ -39,8 +39,8 @@ type MemStorage struct {
 }
 
 func (s *MemStorage) ExportAll() []model.ShortURL {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	result := make([]model.ShortURL, 0, len(s.urls))
 	for _, v := range s.urls {
@@ -151,8 +151,8 @@ func (s *MemStorage) Get(ctx context.Context, shortURL string) (*model.ShortURL,
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	url, exists := s.urls[shortURL]
 	if !exists {
@@ -169,8 +169,8 @@ func (s *MemStorage) GetByOriginal(ctx context.Context, originalURL string) (*mo
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 
 	shortURL, exists := s.index[originalURL]
 	if !exists {
@@ -190,8 +190,8 @@ func (s *MemStorage) GetByUserID(ctx context.Context, userID string) ([]*model.S
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	ids := s.userIndex[userID]
 	result := make([]*model.ShortURL, 0, len(ids))
 	for _, id := range ids {
