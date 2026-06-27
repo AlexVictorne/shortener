@@ -157,7 +157,9 @@ func Example_getUserURLsHandler() {
 	withAuth(h.ShortenURLJSONHandler).ServeHTTP(cw, createReq)
 
 	// Извлекаем auth-куку, выданную при создании.
-	authCookie := cw.Result().Cookies()[0]
+	createRes := cw.Result()
+	defer createRes.Body.Close()
+	authCookie := createRes.Cookies()[0]
 
 	// Запрашиваем список URL с той же кукой.
 	listReq := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
@@ -191,10 +193,12 @@ func Example_deleteUserURLsHandler() {
 	cw := httptest.NewRecorder()
 	withAuth(h.ShortenURLJSONHandler).ServeHTTP(cw, createReq)
 
+	createRes := cw.Result()
+	defer createRes.Body.Close()
 	var created struct{ Result string }
-	_ = json.NewDecoder(cw.Body).Decode(&created)
+	_ = json.NewDecoder(createRes.Body).Decode(&created)
 	id := created.Result[len("http://localhost:8080/"):]
-	authCookie := cw.Result().Cookies()[0]
+	authCookie := createRes.Cookies()[0]
 
 	// Удаляем ссылку.
 	ids, _ := json.Marshal([]string{id})
