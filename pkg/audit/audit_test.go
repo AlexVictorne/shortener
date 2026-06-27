@@ -234,7 +234,7 @@ func (s *spyAuditor) Emit(_ context.Context, _ audit.Event) error {
 
 type errorAuditor struct{ err error }
 
-func (e *errorAuditor) Close() error                                 { return nil }
+func (e *errorAuditor) Close() error                                { return nil }
 func (e *errorAuditor) Emit(_ context.Context, _ audit.Event) error { return e.err }
 
 func readAll(r *http.Request) ([]byte, error) {
