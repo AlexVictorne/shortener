@@ -8,13 +8,18 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"shortener/pkg/audit"
 )
+
+func nopLogger() zerolog.Logger { return zerolog.Nop() }
 
 // --- NoopAuditor ---
 
@@ -167,16 +172,19 @@ func TestMultiAuditor_Emit_ContinuesOnPartialError(t *testing.T) {
 // --- Build ---
 
 func TestBuild_NeitherParam_ReturnsNoop(t *testing.T) {
-	a := audit.Build("", "")
+	a, err := audit.Build("", "", nopLogger())
+	require.NoError(t, err)
 	assert.IsType(t, audit.NoopAuditor{}, a)
 }
 
 func TestBuild_OnlyFile_ReturnsFileAuditor(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.log")
-	a := audit.Build(path, "")
-	require.NoError(t, a.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"}))
-	data, err := os.ReadFile(path)
+	a, err := audit.Build(path, "", nopLogger())
 	require.NoError(t, err)
+	require.NoError(t, a.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"}))
+	require.NoError(t, a.Close())
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
 	assert.NotEmpty(t, data)
 }
 
@@ -186,10 +194,13 @@ func TestBuild_OnlyURL_ReturnsRemoteAuditor(t *testing.T) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
-	a := audit.Build("", srv.URL)
+	a, err := audit.Build("", srv.URL, nopLogger())
+	require.NoError(t, err)
 	require.NoError(t, a.Emit(context.Background(), audit.Event{TS: 1, Action: "follow", URL: "https://ya.ru"}))
+	require.NoError(t, a.Close()) // дренируем канал до закрытия сервера
+	srv.Close()
+
 	assert.True(t, called)
 }
 
@@ -201,21 +212,22 @@ func TestBuild_BothParams_ReturnsMultiAuditor(t *testing.T) {
 		remoteCalled = true
 		w.WriteHeader(http.StatusOK)
 	}))
-	defer srv.Close()
 
-	a := audit.Build(path, srv.URL)
-	require.NoError(t, a.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"}))
-
-	data, err := os.ReadFile(path)
+	a, err := audit.Build(path, srv.URL, nopLogger())
 	require.NoError(t, err)
+	require.NoError(t, a.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"}))
+	require.NoError(t, a.Close()) // дренируем канал до закрытия сервера
+	srv.Close()
+
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
 	assert.NotEmpty(t, data)
 	assert.True(t, remoteCalled)
 }
 
-func TestBuild_InvalidFilePath_SkipsSinkNoError(t *testing.T) {
-	// недоступный путь файла — Build не должен паниковать и должен вернуть Noop
-	a := audit.Build("/no/such/dir/audit.log", "")
-	assert.IsType(t, audit.NoopAuditor{}, a)
+func TestBuild_InvalidFilePath_ReturnsError(t *testing.T) {
+	_, err := audit.Build("/no/such/dir/audit.log", "", nopLogger())
+	assert.Error(t, err)
 }
 
 // --- helpers ---
@@ -248,6 +260,100 @@ func readAll(r *http.Request) ([]byte, error) {
 		}
 	}
 	return buf, nil
+}
+
+// --- AsyncAuditor ---
+
+func TestAsyncAuditor_Emit_DeliveredToInner(t *testing.T) {
+	calls := make([]string, 0, 1)
+	inner := &spyAuditor{label: "inner", calls: &calls}
+
+	a := audit.NewAsyncAuditor(inner, 8, nopLogger())
+	err := a.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
+	require.NoError(t, err)
+	require.NoError(t, a.Close())
+
+	assert.Contains(t, calls, "inner")
+}
+
+func TestAsyncAuditor_Emit_NonBlocking(t *testing.T) {
+	// slow — блокирует воркер на каждом событии
+	slow := &slowAuditor{delay: 50 * time.Millisecond}
+	a := audit.NewAsyncAuditor(slow, 8, nopLogger())
+
+	start := time.Now()
+	for i := 0; i < 4; i++ {
+		require.NoError(t, a.Emit(context.Background(), audit.Event{TS: int64(i), Action: "follow", URL: "https://ya.ru"}))
+	}
+	elapsed := time.Since(start)
+	_ = a.Close()
+
+	// Все 4 вызова Emit должны вернуться немедленно, не ждя воркер
+	assert.Less(t, elapsed, 20*time.Millisecond, "Emit должен быть неблокирующим")
+}
+
+func TestAsyncAuditor_Close_DrainsChannel(t *testing.T) {
+	var mu sync.Mutex
+	received := make([]int64, 0, 10)
+	inner := &collectAuditor{mu: &mu, received: &received}
+
+	a := audit.NewAsyncAuditor(inner, 64, nopLogger())
+	const n = 10
+	for i := 0; i < n; i++ {
+		require.NoError(t, a.Emit(context.Background(), audit.Event{TS: int64(i), Action: "shorten", URL: "https://ya.ru"}))
+	}
+	require.NoError(t, a.Close())
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Len(t, received, n, "Close должен дождаться обработки всех событий из канала")
+}
+
+func TestAsyncAuditor_FullChannel_DropsWithoutBlock(t *testing.T) {
+	slow := &slowAuditor{delay: 100 * time.Millisecond}
+	const bufSize = 2
+	a := audit.NewAsyncAuditor(slow, bufSize, nopLogger())
+
+	// Заполняем канал + 1 лишний — должен быть отброшен без блокировки
+	start := time.Now()
+	for i := 0; i < bufSize+2; i++ {
+		_ = a.Emit(context.Background(), audit.Event{TS: int64(i), Action: "follow", URL: "https://ya.ru"})
+	}
+	elapsed := time.Since(start)
+	_ = a.Close()
+
+	assert.Less(t, elapsed, 50*time.Millisecond, "Emit при переполненном канале не должен блокировать")
+}
+
+func TestBuild_NonNoop_ReturnsAsyncAuditor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.log")
+	a, err := audit.Build(path, "", nopLogger())
+	require.NoError(t, err)
+	assert.IsType(t, &audit.AsyncAuditor{}, a)
+	_ = a.Close()
+}
+
+// --- дополнительные helpers ---
+
+type slowAuditor struct{ delay time.Duration }
+
+func (s *slowAuditor) Close() error { return nil }
+func (s *slowAuditor) Emit(_ context.Context, _ audit.Event) error {
+	time.Sleep(s.delay)
+	return nil
+}
+
+type collectAuditor struct {
+	mu       *sync.Mutex
+	received *[]int64
+}
+
+func (c *collectAuditor) Close() error { return nil }
+func (c *collectAuditor) Emit(_ context.Context, e audit.Event) error {
+	c.mu.Lock()
+	*c.received = append(*c.received, e.TS)
+	c.mu.Unlock()
+	return nil
 }
 
 // splitLines разбивает байты на непустые строки.
