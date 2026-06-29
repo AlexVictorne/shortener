@@ -55,14 +55,6 @@ func LoadConfig() *Config {
 	var auditFile string
 	var auditURL string
 
-	envServerURL := os.Getenv(envNameServerURL)
-	envResultURL := os.Getenv(envNameBaseURL)
-	envFileStorage := os.Getenv(envNameFileStorage)
-	envDatabaseDSN := os.Getenv(envNameDatabaseDSN)
-	envAuthSecret := os.Getenv(envNameAuthSecret)
-	envAuditFile := os.Getenv(envNameAuditFile)
-	envAuditURL := os.Getenv(envNameAuditURL)
-
 	flagServerURL := flag.String(flagNameServerURL, "", "server base url")
 	flagResultURL := flag.String(flagNameBaseURL, "", "server result url")
 	flagFileStorage := flag.String(flagNameFileStorage, "", "file storage path")
@@ -72,53 +64,54 @@ func LoadConfig() *Config {
 	flagAuditURL := flag.String(flagNameAuditURL, "", "URL of remote audit receiver")
 	flag.Parse()
 
-	// Приоритет env > flag > default
-	if envServerURL != "" {
-		serverURL = envServerURL
+	// Приоритет: объявленная переменная окружения (в т.ч. пустая) > флаг > значение по умолчанию.
+	// LookupEnv отличает необъявленную переменную от явно заданной пустой строки.
+	if val, ok := os.LookupEnv(envNameServerURL); ok {
+		serverURL = val
 	} else if *flagServerURL != "" {
 		serverURL = *flagServerURL
 	} else {
 		serverURL = defaultURL
 	}
 
-	if envResultURL != "" {
-		resultURL = envResultURL
+	if val, ok := os.LookupEnv(envNameBaseURL); ok {
+		resultURL = val
 	} else if *flagResultURL != "" {
 		resultURL = *flagResultURL
 	} else {
 		resultURL = defaultURL
 	}
 
-	if envFileStorage != "" {
-		fileStoragePath = envFileStorage
+	if val, ok := os.LookupEnv(envNameFileStorage); ok {
+		fileStoragePath = val
 	} else if *flagFileStorage != "" {
 		fileStoragePath = *flagFileStorage
 	} else {
 		fileStoragePath = defaultFileStorage
 	}
 
-	if envDatabaseDSN != "" {
-		databaseDSN = envDatabaseDSN
+	if val, ok := os.LookupEnv(envNameDatabaseDSN); ok {
+		databaseDSN = val
 	} else if *flagDatabaseDSN != "" {
 		databaseDSN = *flagDatabaseDSN
 	}
 
-	if envAuthSecret != "" {
-		authSecret = envAuthSecret
+	if val, ok := os.LookupEnv(envNameAuthSecret); ok {
+		authSecret = val
 	} else if *flagAuthSecret != "" {
 		authSecret = *flagAuthSecret
 	} else {
 		authSecret = "dev_secret"
 	}
 
-	if envAuditFile != "" {
-		auditFile = envAuditFile
+	if val, ok := os.LookupEnv(envNameAuditFile); ok {
+		auditFile = val
 	} else if *flagAuditFile != "" {
 		auditFile = *flagAuditFile
 	}
 
-	if envAuditURL != "" {
-		auditURL = envAuditURL
+	if val, ok := os.LookupEnv(envNameAuditURL); ok {
+		auditURL = val
 	} else if *flagAuditURL != "" {
 		auditURL = *flagAuditURL
 	}
