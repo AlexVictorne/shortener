@@ -9,8 +9,7 @@ import (
 func BenchmarkGenerateID(b *testing.B) {
 	g := generator.NewGenerator(8)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = g.GenerateID()
 	}
 }
