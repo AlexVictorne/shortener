@@ -132,6 +132,70 @@ func TestRemoteAuditor_Emit_ConnectionRefusedReturnsError(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestRemoteAuditor_Emit_RetriesOn5xxAndSucceeds(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ra := audit.NewRemoteAuditor(srv.URL)
+	err := ra.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
+	require.NoError(t, err)
+	assert.Equal(t, 3, attempts, "ожидается две неудачные попытки и одна успешная")
+}
+
+func TestRemoteAuditor_Emit_NoRetryOn4xx(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	ra := audit.NewRemoteAuditor(srv.URL)
+	err := ra.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
+	assert.Error(t, err)
+	assert.Equal(t, 1, attempts, "4xx не должен вызывать ретрай")
+}
+
+func TestRemoteAuditor_Emit_ReturnsErrorAfterExhaustedRetries(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	ra := audit.NewRemoteAuditor(srv.URL)
+	err := ra.Emit(context.Background(), audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
+	assert.Error(t, err)
+	// 1 оригинальный запрос + 3 ретрая = 4
+	assert.Equal(t, 4, attempts, "ожидается исчерпание всех ретраев")
+}
+
+func TestRemoteAuditor_Emit_ContextCancelledStopsRetries(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // отменяем сразу
+
+	ra := audit.NewRemoteAuditor(srv.URL)
+	err := ra.Emit(ctx, audit.Event{TS: 1, Action: "shorten", URL: "https://ya.ru"})
+	assert.Error(t, err)
+	assert.LessOrEqual(t, attempts, 1, "отменённый контекст не должен допускать ретраи")
+}
+
 // --- MultiAuditor ---
 
 func TestMultiAuditor_Emit_CallsAllSinks(t *testing.T) {
