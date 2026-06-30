@@ -69,7 +69,11 @@ func main() {
 
 	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
 
-	auditor := audit.Build(cfg.AuditFile, cfg.AuditURL)
+	auditLogger := zerolog.New(os.Stderr).With().Str("component", "audit").Timestamp().Logger()
+	auditor, err := audit.Build(cfg.AuditFile, cfg.AuditURL, auditLogger)
+	if err != nil {
+		log.Fatalf("audit initialization error: %v", err)
+	}
 	defer auditor.Close()
 
 	handlerOpts := []options.OptHandlerOptionsSetter{

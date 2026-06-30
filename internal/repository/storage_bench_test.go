@@ -26,22 +26,24 @@ func BenchmarkMemStorage_Create(b *testing.B) {
 	s := repository.NewMemStorage()
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	i := 0
+	for b.Loop() {
 		_ = s.Create(ctx, &model.ShortURL{
 			ShortURL:    fmt.Sprintf("s%d", i),
 			OriginalURL: fmt.Sprintf("https://example.com/%d", i),
 			UserID:      "u1",
 		})
+		i++
 	}
 }
 
 func BenchmarkMemStorage_Get(b *testing.B) {
 	s := newSeededStorage(10000)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	i := 0
+	for b.Loop() {
 		_, _ = s.Get(context.Background(), fmt.Sprintf("short%07d", i%10000))
+		i++
 	}
 }
 
@@ -61,9 +63,10 @@ func BenchmarkMemStorage_GetParallel(b *testing.B) {
 func BenchmarkMemStorage_GetByOriginal(b *testing.B) {
 	s := newSeededStorage(10000)
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	i := 0
+	for b.Loop() {
 		_, _ = s.GetByOriginal(context.Background(), fmt.Sprintf("https://example.com/page/%d", i%10000))
+		i++
 	}
 }
 
@@ -92,8 +95,7 @@ func BenchmarkMemStorage_GetByUserID(b *testing.B) {
 		})
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, _ = s.GetByUserID(context.Background(), "user1")
 	}
 }
@@ -101,8 +103,8 @@ func BenchmarkMemStorage_GetByUserID(b *testing.B) {
 func BenchmarkMemStorage_BatchCreate(b *testing.B) {
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
+		b.StopTimer()
 		s := repository.NewMemStorage()
 		batch := make([]*model.ShortURL, 50)
 		for j := range batch {
@@ -112,6 +114,7 @@ func BenchmarkMemStorage_BatchCreate(b *testing.B) {
 				UserID:      "u1",
 			}
 		}
+		b.StartTimer()
 		_ = s.BatchCreate(ctx, batch)
 	}
 }
