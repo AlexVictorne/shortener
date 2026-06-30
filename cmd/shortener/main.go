@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"net/url"
 	"os"
 	"os/signal"
@@ -19,6 +20,7 @@ import (
 	"shortener/internal/handler/options"
 	"shortener/internal/repository"
 	"shortener/internal/service"
+	"shortener/pkg/audit"
 	"shortener/pkg/generator"
 	"shortener/pkg/validator"
 )
@@ -63,8 +65,16 @@ func main() {
 
 	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
 
+	auditLogger := zerolog.New(os.Stderr).With().Str("component", "audit").Timestamp().Logger()
+	auditor, err := audit.Build(cfg.AuditFile, cfg.AuditURL, auditLogger)
+	if err != nil {
+		log.Fatalf("audit initialization error: %v", err)
+	}
+	defer auditor.Close()
+
 	handlerOpts := []options.OptHandlerOptionsSetter{
 		options.WithAuthSecret(cfg.AuthSecret),
+		options.WithAuditor(auditor),
 	}
 	if pgStore != nil {
 		handlerOpts = append(handlerOpts, options.WithPinger(pgStore))
@@ -83,6 +93,13 @@ func main() {
 		Addr:    serverAddr.Host,
 		Handler: r,
 	}
+
+	go func() {
+		log.Println("pprof server on 127.0.0.1:6060")
+		if err := http.ListenAndServe("127.0.0.1:6060", nil); err != nil {
+			log.Printf("pprof server error: %v", err)
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

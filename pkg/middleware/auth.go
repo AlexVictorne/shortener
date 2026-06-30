@@ -1,3 +1,4 @@
+// Package middleware предоставляет HTTP-middleware для аутентификации, сжатия и логирования.
 package middleware
 
 import (
@@ -11,6 +12,10 @@ type contextKey string
 const UserIDKey contextKey = "userID"
 const cookieName = "auth_token"
 
+// AuthMiddleware — middleware cookie-аутентификации.
+// Проверяет подпись куки "auth_token" с помощью HMAC-SHA256 и secret.
+// Если кука отсутствует или невалидна, генерирует новый userID, подписывает и устанавливает куку.
+// UserID всегда доступен в контексте запроса через UserIDFromContext.
 func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,12 +42,14 @@ func AuthMiddleware(secret string) func(http.Handler) http.Handler {
 	}
 }
 
+// UserIDFromContext извлекает userID из контекста запроса, установленного AuthMiddleware.
+// Возвращает ("", false), если userID отсутствует или пуст.
 func UserIDFromContext(ctx context.Context) (string, bool) {
 	userID, ok := ctx.Value(UserIDKey).(string)
 	return userID, ok && userID != ""
 }
 
-// UserIDKey returns the context key for user ID (for cross-package usage)
+// UserIDKeyFunc возвращает ключ контекста для userID для использования в других пакетах.
 func UserIDKeyFunc() interface{} {
 	return UserIDKey
 }

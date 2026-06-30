@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,9 +20,37 @@ import (
 	"shortener/internal/model"
 	"shortener/internal/repository"
 	"shortener/internal/service"
+	"shortener/pkg/audit"
 	"shortener/pkg/generator"
 	"shortener/pkg/middleware"
 )
+
+// mockAuditor собирает все испущенные события.
+type mockAuditor struct {
+	mu     sync.Mutex
+	events []audit.Event
+}
+
+func (m *mockAuditor) Close() error { return nil }
+
+func (m *mockAuditor) Emit(_ context.Context, e audit.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, e)
+	return nil
+}
+
+func (m *mockAuditor) Events() []audit.Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]audit.Event, len(m.events))
+	copy(out, m.events)
+	return out
+}
+
+func newHandlerWithAuditor(svc *service.TrimmerService, a audit.Auditor) *handler.Handler {
+	return handler.NewHandler(svc, options.WithAuthSecret(testSecret), options.WithAuditor(a))
+}
 
 func TestHandler_ShortenURLJSONHandler(t *testing.T) {
 	storage := repository.NewMemStorage()
@@ -554,4 +583,123 @@ func TestHandler_DeleteUserURLsHandler(t *testing.T) {
 	assert.Equal(t, http.StatusAccepted, resp4.StatusCode)
 	u2, _ := storage.Get(context.Background(), "other123")
 	assert.False(t, u2.DeletedFlag)
+}
+
+// --- Audit integration tests ---
+
+func TestHandler_ShortenURLHandler_EmitsAuditEvent(t *testing.T) {
+	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
+	spy := &mockAuditor{}
+	h := newHandlerWithAuditor(svc, spy)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://ya.ru"))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	wrapWithAuth(h.ShortenURLHandler).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	events := spy.Events()
+	require.Len(t, events, 1)
+	assert.Equal(t, "shorten", events[0].Action)
+	assert.Equal(t, "https://ya.ru", events[0].URL)
+	assert.NotZero(t, events[0].TS)
+}
+
+func TestHandler_ShortenURLHandler_NoAuditOnError(t *testing.T) {
+	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
+	spy := &mockAuditor{}
+	h := newHandlerWithAuditor(svc, spy)
+
+	// неверный Content-Type → 400, события не должно быть
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://ya.ru"))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	wrapWithAuth(h.ShortenURLHandler).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Empty(t, spy.Events())
+}
+
+func TestHandler_ShortenURLJSONHandler_EmitsAuditEvent(t *testing.T) {
+	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
+	spy := &mockAuditor{}
+	h := newHandlerWithAuditor(svc, spy)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	wrapWithAuth(h.ShortenURLJSONHandler).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	events := spy.Events()
+	require.Len(t, events, 1)
+	assert.Equal(t, "shorten", events[0].Action)
+	assert.Equal(t, "https://example.com", events[0].URL)
+	assert.NotZero(t, events[0].TS)
+}
+
+func TestHandler_ShortenURLJSONHandler_NoAuditOnError(t *testing.T) {
+	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
+	spy := &mockAuditor{}
+	h := newHandlerWithAuditor(svc, spy)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":""}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	wrapWithAuth(h.ShortenURLJSONHandler).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Empty(t, spy.Events())
+}
+
+func TestHandler_RedirectHandler_EmitsFollowEvent(t *testing.T) {
+	storage := repository.NewMemStorage()
+	svc := service.NewTrimmerService(storage, generator.NewGenerator(8), "http://localhost:8080/")
+	spy := &mockAuditor{}
+	h := newHandlerWithAuditor(svc, spy)
+
+	ctx := context.WithValue(context.Background(), middleware.UserIDKey, "test-user")
+	shortURL, err := svc.TrimURL(ctx, "https://ya.ru")
+	require.NoError(t, err)
+	id := strings.TrimPrefix(shortURL, "http://localhost:8080/")
+
+	req := httptest.NewRequest(http.MethodGet, "/"+id, nil)
+	w := httptest.NewRecorder()
+	h.RedirectHandler(w, req)
+
+	require.Equal(t, http.StatusTemporaryRedirect, w.Code)
+	events := spy.Events()
+	require.Len(t, events, 1)
+	assert.Equal(t, "follow", events[0].Action)
+	assert.Equal(t, "https://ya.ru", events[0].URL)
+	assert.NotZero(t, events[0].TS)
+}
+
+func TestHandler_RedirectHandler_NoAuditOnNotFound(t *testing.T) {
+	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
+	spy := &mockAuditor{}
+	h := newHandlerWithAuditor(svc, spy)
+
+	req := httptest.NewRequest(http.MethodGet, "/notexist", nil)
+	w := httptest.NewRecorder()
+	h.RedirectHandler(w, req)
+
+	require.Equal(t, http.StatusNotFound, w.Code)
+	assert.Empty(t, spy.Events())
+}
+
+func TestHandler_AuditEvent_ContainsUserID(t *testing.T) {
+	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
+	spy := &mockAuditor{}
+	h := newHandlerWithAuditor(svc, spy)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://ya.ru"))
+	req.Header.Set("Content-Type", "text/plain")
+	w := httptest.NewRecorder()
+	wrapWithAuth(h.ShortenURLHandler).ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+	events := spy.Events()
+	require.Len(t, events, 1)
+	assert.NotEmpty(t, events[0].UserID, "user_id должен быть заполнен при наличии auth middleware")
 }
