@@ -27,8 +27,12 @@ import (
 	"shortener/pkg/validator"
 )
 
+var buildVersion string
+var buildDate string
+var buildCommit string
+
 func main() {
-	fmt.Println(buildinfo.String())
+	fmt.Println(buildinfo.Format(buildVersion, buildDate, buildCommit))
 
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	zerolog.TimeFieldFormat = time.RFC3339Nano
