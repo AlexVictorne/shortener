@@ -30,17 +30,11 @@ import (
 	"shortener/internal/handler/options"
 )
 
-// Pinger реализуется любым бэкендом хранилища, способным проверить собственную доступность.
-// PgStorage удовлетворяет этому интерфейсу; MemStorage не требует отдельного пинга.
-type Pinger interface {
-	Ping(ctx context.Context) error
-}
-
 // Handler хранит зависимости, необходимые для обработки HTTP-запросов.
 // Создавайте экземпляры через NewHandler; не конструируйте структуру напрямую.
 type Handler struct {
 	service    *service.TrimmerService
-	pinger     Pinger
+	pinger     options.Pinger
 	authSecret string
 	auditor    audit.Auditor
 }
@@ -57,14 +51,10 @@ func NewHandler(service *service.TrimmerService, opts ...options.OptHandlerOptio
 		h.authSecret = optsStruct.AuthSecret
 	}
 	if optsStruct.Pinger != nil {
-		if p, ok := optsStruct.Pinger.(Pinger); ok {
-			h.pinger = p
-		}
+		h.pinger = optsStruct.Pinger
 	}
 	if optsStruct.Auditor != nil {
-		if a, ok := optsStruct.Auditor.(audit.Auditor); ok {
-			h.auditor = a
-		}
+		h.auditor = optsStruct.Auditor
 	}
 	return h
 }

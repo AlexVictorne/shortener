@@ -7,6 +7,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"net/url"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -25,11 +26,17 @@ import (
 	"shortener/pkg/validator"
 )
 
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
+
 // main инициализирует конфигурацию, хранилище, сервисы и запускает HTTP-сервер.
 // Завершение выполняется корректно при получении SIGINT, SIGTERM или SIGQUIT:
 // все активные запросы дообрабатываются, несохраненные данные сбрасываются в хранилище.
 func main() {
-	fmt.Println(buildinfo.String())
+	fmt.Println(buildinfo.Format(buildVersion, buildDate, buildCommit))
 
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 	zerolog.TimeFieldFormat = time.RFC3339Nano
@@ -69,7 +76,12 @@ func main() {
 
 	service := service.NewTrimmerService(store, idGenerator, validatedResultURL)
 
-	auditor := audit.Build(cfg.AuditFile, cfg.AuditURL)
+	auditLogger := zerolog.New(os.Stderr).With().Str("component", "audit").Timestamp().Logger()
+	auditor, err := audit.Build(cfg.AuditFile, cfg.AuditURL, auditLogger)
+	if err != nil {
+		log.Fatalf("audit initialization error: %v", err)
+	}
+	defer auditor.Close()
 
 	handlerOpts := []options.OptHandlerOptionsSetter{
 		options.WithAuthSecret(cfg.AuthSecret),

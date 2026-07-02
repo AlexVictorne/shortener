@@ -189,16 +189,16 @@ func LoadConfig() *Config {
 	}
 
 	// Читаем переменные окружения
-	envServerURL := os.Getenv(envNameServerURL)
-	envResultURL := os.Getenv(envNameBaseURL)
-	envFileStorage := os.Getenv(envNameFileStorage)
-	envDatabaseDSN := os.Getenv(envNameDatabaseDSN)
-	envAuthSecret := os.Getenv(envNameAuthSecret)
-	envAuditFile := os.Getenv(envNameAuditFile)
-	envAuditURL := os.Getenv(envNameAuditURL)
-	envEnableHTTPS := os.Getenv(envNameEnableHTTPS)
-	envTLSCert := os.Getenv(envNameTLSCert)
-	envTLSKey := os.Getenv(envNameTLSKey)
+	envServerURL, _ := os.LookupEnv(envNameServerURL)
+	envResultURL, _ := os.LookupEnv(envNameBaseURL)
+	envFileStorage, _ := os.LookupEnv(envNameFileStorage)
+	envDatabaseDSN, _ := os.LookupEnv(envNameDatabaseDSN)
+	envAuthSecret, _ := os.LookupEnv(envNameAuthSecret)
+	envAuditFile, _ := os.LookupEnv(envNameAuditFile)
+	envAuditURL, _ := os.LookupEnv(envNameAuditURL)
+	envEnableHTTPS, _ := os.LookupEnv(envNameEnableHTTPS)
+	envTLSCert, _ := os.LookupEnv(envNameTLSCert)
+	envTLSKey, _ := os.LookupEnv(envNameTLSKey)
 
 	// Если файл конфигурации не задан, используем пустую структуру для упрощения кода ниже
 	if fc == nil {
