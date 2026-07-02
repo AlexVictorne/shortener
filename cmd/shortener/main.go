@@ -27,9 +27,11 @@ import (
 	"shortener/pkg/validator"
 )
 
-var buildVersion string
-var buildDate string
-var buildCommit string
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
 
 func main() {
 	fmt.Println(buildinfo.Format(buildVersion, buildDate, buildCommit))
