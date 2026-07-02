@@ -22,13 +22,13 @@ type Config struct {
 	// DatabaseDSN — строка подключения к PostgreSQL; флаг -d / env DATABASE_DSN.
 	// Если не задана, используется MemStorage.
 	DatabaseDSN string
-	// AuthSecret — секрет для подписи auth-куки HMAC-SHA256; флаг -s / env AUTH_SECRET.
+	// AuthSecret — секрет для подписи auth-куки HMAC-SHA256; флаг -auth-secret / env AUTH_SECRET.
 	AuthSecret string
 	// AuditFile — путь к файлу аудит-лога (JSON, один объект на строку); флаг -audit-file / env AUDIT_FILE.
 	AuditFile string
 	// AuditURL — URL удаленного приемника аудит-событий (HTTP POST); флаг -audit-url / env AUDIT_URL.
 	AuditURL string
-	// EnableHTTPS — включает режим HTTPS; флаг -tls / env ENABLE_HTTPS.
+	// EnableHTTPS — включает режим HTTPS; флаг -s / env ENABLE_HTTPS.
 	EnableHTTPS bool
 	// TLSCertFile — путь к PEM-файлу сертификата TLS; флаг -tls-cert / env TLS_CERT_FILE.
 	TLSCertFile string
@@ -54,7 +54,7 @@ type fileConfig struct {
 	AuditFile *string `json:"audit_file"`
 	// AuditURL — URL удаленного приемника аудита; аналог AUDIT_URL / -audit-url.
 	AuditURL *string `json:"audit_url"`
-	// EnableHTTPS — включает HTTPS; аналог ENABLE_HTTPS / -tls.
+	// EnableHTTPS — включает HTTPS; аналог ENABLE_HTTPS / -s.
 	EnableHTTPS *bool `json:"enable_https"`
 	// TLSCertFile — путь к PEM-сертификату; аналог TLS_CERT_FILE / -tls-cert.
 	TLSCertFile *string `json:"tls_cert_file"`
@@ -129,10 +129,10 @@ func LoadConfig() *Config {
 		flagNameBaseURL     = "b"
 		flagNameFileStorage = "f"
 		flagNameDatabaseDSN = "d"
-		flagNameAuthSecret  = "s"
+		flagNameAuthSecret  = "auth-secret"
 		flagNameAuditFile   = "audit-file"
 		flagNameAuditURL    = "audit-url"
-		flagNameEnableHTTPS = "tls"
+		flagNameEnableHTTPS = "s"
 		flagNameTLSCert     = "tls-cert"
 		flagNameTLSKey      = "tls-key"
 	)
