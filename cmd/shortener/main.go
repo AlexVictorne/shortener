@@ -81,7 +81,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("audit initialization error: %v", err)
 	}
-	defer auditor.Close()
 
 	handlerOpts := []options.OptHandlerOptionsSetter{
 		options.WithAuthSecret(cfg.AuthSecret),
