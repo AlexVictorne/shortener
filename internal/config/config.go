@@ -48,7 +48,7 @@ type fileConfig struct {
 	FileStoragePath *string `json:"file_storage_path"`
 	// DatabaseDSN — строка подключения к БД; аналог DATABASE_DSN / -d.
 	DatabaseDSN *string `json:"database_dsn"`
-	// AuthSecret — секрет подписи куки; аналог AUTH_SECRET / -s.
+	// AuthSecret — секрет подписи куки; аналог AUTH_SECRET / -auth-secret.
 	AuthSecret *string `json:"auth_secret"`
 	// AuditFile — путь к файлу аудит-лога; аналог AUDIT_FILE / -audit-file.
 	AuditFile *string `json:"audit_file"`
