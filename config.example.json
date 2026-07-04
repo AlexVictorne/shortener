@@ -8,5 +8,7 @@
     "audit_url": "",
     "enable_https": false,
     "tls_cert_file": "",
-    "tls_key_file": ""
+    "tls_key_file": "",
+    "trusted_subnet": "",
+    "grpc_address": ""
 }

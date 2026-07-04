@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"net/url"
@@ -18,10 +17,8 @@ import (
 	"google.golang.org/grpc"
 
 	"shortener/internal/config"
-	"shortener/internal/grpchandler"
 	"shortener/internal/handler"
 	"shortener/internal/handler/options"
-	"shortener/internal/pb"
 	"shortener/internal/repository"
 	"shortener/internal/service"
 	"shortener/pkg/audit"
@@ -36,9 +33,10 @@ var (
 	buildCommit  string
 )
 
-// main инициализирует конфигурацию, хранилище, сервисы и запускает HTTP-сервер.
-// Завершение выполняется корректно при получении SIGINT, SIGTERM или SIGQUIT:
-// все активные запросы дообрабатываются, несохраненные данные сбрасываются в хранилище.
+// main инициализирует конфигурацию, хранилище, сервисы и запускает HTTP-сервер,
+// а также gRPC-сервер, если задан GRPCAddress. Завершение выполняется корректно
+// при получении SIGINT, SIGTERM или SIGQUIT: все активные запросы дообрабатываются,
+// несохраненные данные сбрасываются в хранилище.
 func main() {
 	fmt.Println(buildinfo.Format(buildVersion, buildDate, buildCommit))
 
@@ -83,7 +81,19 @@ func main() {
 	auditLogger := zerolog.New(os.Stderr).With().Str("component", "audit").Timestamp().Logger()
 	auditor, err := audit.Build(cfg.AuditFile, cfg.AuditURL, auditLogger)
 	if err != nil {
+		// store уже открыт к этому моменту — закрываем его перед выходом, иначе
+		// несохраненные данные MemStorage будут потеряны.
+		store.Close()
 		log.Fatalf("audit initialization error: %v", err)
+	}
+
+	// fatalf логирует ошибку и завершает процесс, предварительно закрывая store и
+	// auditor. С этой точки main() оба уже открыты — log.Fatalf напрямую (как выше)
+	// вызвал бы os.Exit в обход их Close() и потерял бы несохраненные данные.
+	fatalf := func(format string, args ...any) {
+		store.Close()
+		auditor.Close()
+		log.Fatalf(format, args...)
 	}
 
 	handlerOpts := []options.OptHandlerOptionsSetter{
@@ -101,7 +111,7 @@ func main() {
 
 	serverAddr, err := url.Parse(validatedBaseURL)
 	if err != nil {
-		log.Fatalf("Invalid server address: %v", err)
+		fatalf("Invalid server address: %v", err)
 	}
 
 	server := &http.Server{
@@ -109,28 +119,21 @@ func main() {
 		Handler: r,
 	}
 
-	go func() {
-		log.Println("pprof server on 127.0.0.1:6060")
-		if err := http.ListenAndServe("127.0.0.1:6060", nil); err != nil {
-			log.Printf("pprof server error: %v", err)
-		}
-	}()
+	// pprofServer использует net/http/pprof, зарегистрированный побочным
+	// импортом в http.DefaultServeMux; слушать сокет и запускать Serve — задача
+	// run(), симметрично конструированию основного http.Server выше.
+	pprofServer := &http.Server{
+		Addr: "127.0.0.1:6060",
+	}
 
-	// Запускаем gRPC-сервер, если задан адрес в конфигурации.
+	// Конструируем gRPC-сервер, если задан адрес в конфигурации; слушать сокет
+	// и запускать Serve — задача run(), симметрично конструированию http.Server выше.
 	var grpcSrv *grpc.Server
 	if cfg.GRPCAddress != "" {
-		lis, err := net.Listen("tcp", cfg.GRPCAddress)
+		grpcSrv, err = newGRPCServer(cfg, service, auditor)
 		if err != nil {
-			log.Fatalf("gRPC listen error: %v", err)
+			fatalf("gRPC server initialization error: %v", err)
 		}
-		grpcSrv = grpc.NewServer()
-		pb.RegisterShortenerServiceServer(grpcSrv, grpchandler.NewServer(service, cfg.AuthSecret))
-		go func() {
-			log.Printf("Starting gRPC server on %s", cfg.GRPCAddress)
-			if err := grpcSrv.Serve(lis); err != nil {
-				log.Printf("gRPC server error: %v", err)
-			}
-		}()
 	}
 
 	// Перехватываем SIGINT, SIGTERM и SIGQUIT для корректного завершения
@@ -140,15 +143,11 @@ func main() {
 	// onShutdown вызывается гарантированно при любом завершении сервера:
 	// сохраняет данные и освобождает ресурсы
 	onShutdown := func() {
-		if grpcSrv != nil {
-			log.Println("Stopping gRPC server...")
-			grpcSrv.GracefulStop()
-		}
 		store.Close()
 		auditor.Close()
 	}
 
-	if err := run(ctx, server, cfg, onShutdown); err != nil {
+	if err := run(ctx, server, pprofServer, grpcSrv, cfg.GRPCAddress, cfg, onShutdown); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }

@@ -2,6 +2,7 @@ package grpchandler
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,18 +15,41 @@ import (
 	"shortener/internal/pb"
 	"shortener/internal/repository"
 	"shortener/internal/service"
+	"shortener/pkg/audit"
 	"shortener/pkg/auth"
 	"shortener/pkg/generator"
 	"shortener/pkg/middleware"
 )
 
+// spyAuditor — тестовый audit.Auditor, собирающий все переданные события.
+type spyAuditor struct {
+	mu     sync.Mutex
+	events []audit.Event
+}
+
+func (s *spyAuditor) Emit(_ context.Context, e audit.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, e)
+	return nil
+}
+
+func (s *spyAuditor) Close() error { return nil }
+
 // newTestServer создает Server с MemStorage и фиксированным секретом для тестов.
 func newTestServer(t *testing.T) *Server {
+	t.Helper()
+	return newTestServerWithAuditor(t, nil)
+}
+
+// newTestServerWithAuditor создает Server с переданным auditor (может быть nil —
+// тогда используется audit.NoopAuditor{}, как и в NewServer).
+func newTestServerWithAuditor(t *testing.T, auditor audit.Auditor) *Server {
 	t.Helper()
 	stor := repository.NewMemStorage()
 	gen := generator.NewGenerator(8)
 	svc := service.NewTrimmerService(stor, gen, "http://localhost:8080/")
-	return NewServer(svc, "test_secret")
+	return NewServer(svc, "test_secret", auditor)
 }
 
 // authContext создает контекст с валидным заголовком authorization в gRPC metadata.
@@ -129,6 +153,61 @@ func TestExpandURL_NotFound(t *testing.T) {
 	st, ok := status.FromError(err)
 	require.True(t, ok)
 	assert.Equal(t, codes.NotFound, st.Code())
+}
+
+// TestShortenURL_EmitsAuditEvent проверяет, что успешное сокращение URL
+// отправляет аудит-событие "shorten" — симметрично HTTP ShortenURLHandler.
+func TestShortenURL_EmitsAuditEvent(t *testing.T) {
+	spy := &spyAuditor{}
+	srv := newTestServerWithAuditor(t, spy)
+	ctx := authContext("audit-user", "test_secret")
+
+	_, err := srv.ShortenURL(ctx, &pb.URLShortenRequest{Url: "https://audit.example.com"})
+	require.NoError(t, err)
+
+	require.Len(t, spy.events, 1)
+	assert.Equal(t, "shorten", spy.events[0].Action)
+	assert.Equal(t, "audit-user", spy.events[0].UserID)
+	assert.Equal(t, "https://audit.example.com", spy.events[0].URL)
+}
+
+// TestShortenURL_Conflict_DoesNotEmitAuditEvent проверяет, что повторное
+// сокращение уже существующего URL (AlreadyExists) не создает еще одно
+// аудит-событие — симметрично HTTP ShortenURLHandler, который в ветке
+// Conflict возвращает ответ до вызова emitAudit.
+func TestShortenURL_Conflict_DoesNotEmitAuditEvent(t *testing.T) {
+	spy := &spyAuditor{}
+	srv := newTestServerWithAuditor(t, spy)
+	ctx := context.Background()
+
+	_, err := srv.ShortenURL(ctx, &pb.URLShortenRequest{Url: "https://audit-conflict.example.com"})
+	require.NoError(t, err)
+
+	_, err = srv.ShortenURL(ctx, &pb.URLShortenRequest{Url: "https://audit-conflict.example.com"})
+	require.Error(t, err)
+
+	require.Len(t, spy.events, 1)
+}
+
+// TestExpandURL_EmitsAuditEvent проверяет, что успешное раскрытие короткого
+// идентификатора отправляет аудит-событие "follow" — симметрично HTTP
+// RedirectHandler.
+func TestExpandURL_EmitsAuditEvent(t *testing.T) {
+	spy := &spyAuditor{}
+	srv := newTestServerWithAuditor(t, spy)
+	ctx := authContext("audit-user", "test_secret")
+
+	shortenResp, err := srv.ShortenURL(ctx, &pb.URLShortenRequest{Url: "https://audit-expand.example.com"})
+	require.NoError(t, err)
+	id := shortenResp.GetResult()[len("http://localhost:8080/"):]
+
+	_, err = srv.ExpandURL(ctx, &pb.URLExpandRequest{Id: id})
+	require.NoError(t, err)
+
+	require.Len(t, spy.events, 2)
+	assert.Equal(t, "follow", spy.events[1].Action)
+	assert.Equal(t, "audit-user", spy.events[1].UserID)
+	assert.Equal(t, "https://audit-expand.example.com", spy.events[1].URL)
 }
 
 // TestListUserURLs_Success проверяет, что после сокращения URL с авторизацией
