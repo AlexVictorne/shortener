@@ -1,0 +1,12 @@
+{
+    "server_address": "localhost:8080",
+    "base_url": "http://localhost:8080",
+    "file_storage_path": "shortener_data.json",
+    "database_dsn": "",
+    "auth_secret": "dev_secret",
+    "audit_file": "",
+    "audit_url": "",
+    "enable_https": false,
+    "tls_cert_file": "",
+    "tls_key_file": ""
+}

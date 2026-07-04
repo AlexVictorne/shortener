@@ -18,8 +18,7 @@ func BenchmarkFileAuditor_Emit(b *testing.B) {
 
 	e := audit.Event{TS: 1700000000, Action: "follow", UserID: "u1", URL: "https://example.com/page/123"}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = fa.Emit(context.Background(), e)
 	}
 }

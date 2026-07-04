@@ -5,7 +5,6 @@ import (
 	"testing"
 )
 
-// TestOrNA проверяет, что orNA возвращает "N/A" для пустой строки и саму строку иначе.
 func TestOrNA(t *testing.T) {
 	tests := []struct {
 		input string
@@ -22,13 +21,8 @@ func TestOrNA(t *testing.T) {
 	}
 }
 
-// TestString_DefaultsToNA проверяет, что при пустых переменных все поля содержат "N/A".
-func TestString_DefaultsToNA(t *testing.T) {
-	Version = ""
-	Date = ""
-	Commit = ""
-
-	out := String()
+func TestFormat_DefaultsToNA(t *testing.T) {
+	out := Format("", "", "")
 
 	for _, line := range []string{
 		"Build version: N/A",
@@ -36,23 +30,13 @@ func TestString_DefaultsToNA(t *testing.T) {
 		"Build commit: N/A",
 	} {
 		if !strings.Contains(out, line) {
-			t.Errorf("String() does not contain %q, got:\n%s", line, out)
+			t.Errorf("Format() does not contain %q, got:\n%s", line, out)
 		}
 	}
 }
 
-// TestString_WithValues проверяет, что установленные значения отображаются корректно.
-func TestString_WithValues(t *testing.T) {
-	Version = "1.2.3"
-	Date = "2026-06-27"
-	Commit = "abc1234"
-	defer func() {
-		Version = ""
-		Date = ""
-		Commit = ""
-	}()
-
-	out := String()
+func TestFormat_WithValues(t *testing.T) {
+	out := Format("1.2.3", "2026-06-27", "abc1234")
 
 	for _, line := range []string{
 		"Build version: 1.2.3",
@@ -60,7 +44,7 @@ func TestString_WithValues(t *testing.T) {
 		"Build commit: abc1234",
 	} {
 		if !strings.Contains(out, line) {
-			t.Errorf("String() does not contain %q, got:\n%s", line, out)
+			t.Errorf("Format() does not contain %q, got:\n%s", line, out)
 		}
 	}
 }

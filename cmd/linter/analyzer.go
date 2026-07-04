@@ -4,8 +4,6 @@ import (
 	"go/ast"
 
 	"golang.org/x/tools/go/analysis"
-	"golang.org/x/tools/go/analysis/passes/inspect"
-	"golang.org/x/tools/go/ast/inspector"
 )
 
 // Analyzer — статический анализатор exitcheck.
@@ -20,10 +18,9 @@ import (
 // Оба правила направлены на то, чтобы завершение процесса всегда было
 // явным, контролируемым и происходило только в точке входа программы.
 var Analyzer = &analysis.Analyzer{
-	Name:     "exitcheck",
-	Doc:      "сообщает о вызовах panic, log.Fatal* и os.Exit вне функции main пакета main",
-	Requires: []*analysis.Analyzer{inspect.Analyzer},
-	Run:      run,
+	Name: "exitcheck",
+	Doc:  "сообщает о вызовах panic, log.Fatal* и os.Exit вне функции main пакета main",
+	Run:  run,
 }
 
 // logFatalNames — множество имён функций пакета log, приводящих к завершению
@@ -38,11 +35,6 @@ var logFatalNames = map[string]bool{
 // run — точка входа анализатора. Обходит все файлы пакета и для каждого
 // вызывает checkFile.
 func run(pass *analysis.Pass) (interface{}, error) {
-	// Зависимость inspect.Analyzer объявлена в Requires для соответствия
-	// стандартному контракту; фактический обход AST выполняется вручную
-	// в checkFile, чтобы отслеживать контекст вмещающей функции.
-	_ = pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
-
 	for _, file := range pass.Files {
 		checkFile(pass, file)
 	}
@@ -60,52 +52,33 @@ func checkFile(pass *analysis.Pass, file *ast.File) {
 		case *ast.FuncDecl:
 			// Разрешены log.Fatal*/os.Exit только в func main() пакета main.
 			isMain := isMainPkg && d.Name != nil && d.Name.Name == "main"
-			walkStmts(pass, d.Body, isMain)
+			if d.Body != nil {
+				walk(pass, d.Body, isMain)
+			}
 		case *ast.GenDecl:
 			// Инициализаторы переменных/констант уровня пакета находятся вне
 			// любой функции — запрещённые вызовы здесь недопустимы.
-			walkNode(pass, d, false)
+			walk(pass, d, false)
 		}
 	}
 }
 
-// walkStmts обходит блок операторов body. Параметр inMain сигнализирует,
-// что блок принадлежит функции main пакета main и вызовы log.Fatal*/os.Exit
-// в нём разрешены.
+// walk обходит произвольный узел AST node. Параметр inMain сигнализирует,
+// что node находится в теле функции main пакета main и вызовы
+// log.Fatal*/os.Exit в нём разрешены.
 //
 // Вложенные функциональные литералы (func() { ... }) обрабатываются
 // рекурсивно с inMain = false: замыкание не является функцией main, даже
 // если определено внутри неё.
-func walkStmts(pass *analysis.Pass, body *ast.BlockStmt, inMain bool) {
-	if body == nil {
-		return
-	}
-	ast.Inspect(body, func(n ast.Node) bool {
+func walk(pass *analysis.Pass, node ast.Node, inMain bool) {
+	ast.Inspect(node, func(n ast.Node) bool {
 		if n == nil {
 			return false
 		}
 		// Функциональный литерал образует собственную область видимости.
 		// Спускаемся в него с inMain = false.
 		if fl, ok := n.(*ast.FuncLit); ok {
-			walkStmts(pass, fl.Body, false)
-			return false
-		}
-		if call, ok := n.(*ast.CallExpr); ok {
-			reportIfForbidden(pass, call, inMain)
-		}
-		return true
-	})
-}
-
-// walkNode обходит произвольный узел AST вне тела функции.
-// Используется для анализа инициализаторов уровня пакета.
-func walkNode(pass *analysis.Pass, node ast.Node, inMain bool) {
-	ast.Inspect(node, func(n ast.Node) bool {
-		if n == nil {
-			return false
-		}
-		if fl, ok := n.(*ast.FuncLit); ok {
-			walkStmts(pass, fl.Body, false)
+			walk(pass, fl.Body, false)
 			return false
 		}
 		if call, ok := n.(*ast.CallExpr); ok {

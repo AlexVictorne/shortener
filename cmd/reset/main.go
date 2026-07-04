@@ -1,49 +1,59 @@
 // cmd/reset генерирует методы Reset() для структур с комментарием // generate:reset.
 // Запускать из корня проекта: go run ./cmd/reset/
+//
+// Для определения, реализует ли поле структуры интерфейс { Reset() },
+// используется типовая информация go/types (через golang.org/x/tools/go/packages),
+// а не рантайм-приведение типов. Это позволяет генератору решать на этапе
+// генерации, нужна ли проверка вообще, и не добавлять в сгенерированный код
+// лишние "if resetter, ok := ...(interface{ Reset() })" для полей, которые
+// заведомо не могут его реализовывать.
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"go/ast"
 	"go/format"
-	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"golang.org/x/tools/go/packages"
 )
 
-var primitives = map[string]string{
-	"int":        "0",
-	"int8":       "0",
-	"int16":      "0",
-	"int32":      "0",
-	"int64":      "0",
-	"uint":       "0",
-	"uint8":      "0",
-	"uint16":     "0",
-	"uint32":     "0",
-	"uint64":     "0",
-	"uintptr":    "0",
-	"float32":    "0",
-	"float64":    "0",
-	"complex64":  "0",
-	"complex128": "0",
-	"string":     `""`,
-	"bool":       "false",
-	"byte":       "0",
-	"rune":       "0",
+// resetterIface — интерфейс { Reset() }, с которым сверяются типы полей
+// через types.Implements.
+var resetterIface = types.NewInterfaceType([]*types.Func{
+	types.NewFunc(token.NoPos, nil, "Reset", types.NewSignatureType(nil, nil, nil, nil, nil, false)),
+}, nil).Complete()
+
+const loadMode = packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
+	packages.NeedImports | packages.NeedDeps | packages.NeedTypes | packages.NeedSyntax |
+	packages.NeedTypesInfo
+
+// fieldInfo описывает одно поле структуры вместе с его типом,
+// разрешённым через go/types.
+type fieldInfo struct {
+	name string
+	typ  types.Type
 }
 
+// structInfo описывает структуру, помеченную // generate:reset.
+// named — тип структуры из go/types; используется, чтобы отследить
+// самоссылки и ссылки между структурами, генерируемыми в одном запуске
+// (см. resetterChecker).
 type structInfo struct {
 	name   string
-	fields []*ast.Field
+	named  *types.Named
+	fields []fieldInfo
 }
 
+// pkgInfo описывает пакет с одной или несколькими структурами для генерации.
 type pkgInfo struct {
 	name    string
+	dir     string
 	structs []structInfo
 }
 
@@ -53,22 +63,22 @@ func main() {
 		root = os.Args[1]
 	}
 
-	packages, err := walkPackages(root)
+	pkgs, err := loadPackages(root)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error walking packages: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error loading packages: %v\n", err)
 		os.Exit(1)
 	}
 
 	generated := 0
-	for dir, pkg := range packages {
+	for _, pkg := range pkgs {
 		if len(pkg.structs) == 0 {
 			continue
 		}
-		if err := generateFile(dir, pkg); err != nil {
-			fmt.Fprintf(os.Stderr, "error generating %s/reset.gen.go: %v\n", dir, err)
+		if err := generateFile(pkg); err != nil {
+			fmt.Fprintf(os.Stderr, "error generating %s/reset.gen.go: %v\n", pkg.dir, err)
 			os.Exit(1)
 		}
-		fmt.Printf("generated %s/reset.gen.go (%d structs)\n", dir, len(pkg.structs))
+		fmt.Printf("generated %s/reset.gen.go (%d structs)\n", pkg.dir, len(pkg.structs))
 		generated++
 	}
 	if generated == 0 {
@@ -76,75 +86,102 @@ func main() {
 	}
 }
 
-func walkPackages(root string) (map[string]*pkgInfo, error) {
-	packages := make(map[string]*pkgInfo)
+// loadPackages загружает все пакеты, начиная с root и ниже, вместе с типовой
+// информацией, и извлекает структуры, помеченные // generate:reset.
+func loadPackages(root string) ([]*pkgInfo, error) {
+	cfg := &packages.Config{Mode: loadMode, Dir: root}
+	rawPkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		return nil, err
+	}
+	if packages.PrintErrors(rawPkgs) > 0 {
+		return nil, fmt.Errorf("one or more packages under %s failed to type-check", root)
+	}
 
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
+	var result []*pkgInfo
+	for _, p := range rawPkgs {
+		if len(p.GoFiles) == 0 {
+			continue
 		}
-		if d.IsDir() {
-			name := d.Name()
-			if path != "." && (name == "vendor" || strings.HasPrefix(name, ".")) {
-				return filepath.SkipDir
-			}
-			return nil
+		structs := collectStructs(p)
+		if len(structs) == 0 {
+			continue
 		}
-		if !strings.HasSuffix(path, ".go") ||
-			strings.HasSuffix(path, "_test.go") ||
-			strings.HasSuffix(path, ".gen.go") {
-			return nil
-		}
-
-		dir := filepath.Dir(path)
-		structs, pkgName, err := parseFile(path)
-		if err != nil || len(structs) == 0 {
-			return err
-		}
-
-		if _, ok := packages[dir]; !ok {
-			packages[dir] = &pkgInfo{name: pkgName}
-		}
-		packages[dir].structs = append(packages[dir].structs, structs...)
-		return nil
-	})
-
-	return packages, err
+		result = append(result, &pkgInfo{
+			name:    p.Name,
+			dir:     filepath.Dir(p.GoFiles[0]),
+			structs: structs,
+		})
+	}
+	return result, nil
 }
 
-func parseFile(path string) ([]structInfo, string, error) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
-	if err != nil {
-		return nil, "", err
-	}
-
+// collectStructs обходит AST-файлы пакета p и извлекает структуры,
+// помеченные // generate:reset, вместе с типовой информацией об их полях.
+func collectStructs(p *packages.Package) []structInfo {
 	var structs []structInfo
-	for _, decl := range f.Decls {
-		genDecl, ok := decl.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.TYPE {
-			continue
-		}
-		if !hasGenerateReset(genDecl.Doc) {
-			continue
-		}
-		for _, spec := range genDecl.Specs {
-			ts, ok := spec.(*ast.TypeSpec)
-			if !ok {
+	for _, file := range p.Syntax {
+		for _, decl := range file.Decls {
+			genDecl, ok := decl.(*ast.GenDecl)
+			if !ok || genDecl.Tok != token.TYPE || !hasGenerateReset(genDecl.Doc) {
 				continue
 			}
-			st, ok := ts.Type.(*ast.StructType)
-			if !ok {
-				continue
+			for _, spec := range genDecl.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				st, ok := ts.Type.(*ast.StructType)
+				if !ok {
+					continue
+				}
+				structs = append(structs, structInfo{
+					name:   ts.Name.Name,
+					named:  namedType(p, ts.Name.Name),
+					fields: collectFields(p, st),
+				})
 			}
-			structs = append(structs, structInfo{
-				name:   ts.Name.Name,
-				fields: st.Fields.List,
-			})
 		}
 	}
+	return structs
+}
 
-	return structs, f.Name.Name, nil
+// namedType возвращает *types.Named для типа с именем name, объявленного
+// в пакете p, если такой тип найден в области видимости пакета.
+func namedType(p *packages.Package, name string) *types.Named {
+	obj := p.Types.Scope().Lookup(name)
+	tn, ok := obj.(*types.TypeName)
+	if !ok {
+		return nil
+	}
+	named, _ := tn.Type().(*types.Named)
+	return named
+}
+
+// collectFields извлекает описания полей структуры st, разрешая тип
+// каждого поля через типовую информацию пакета p.
+func collectFields(p *packages.Package, st *ast.StructType) []fieldInfo {
+	var fields []fieldInfo
+	for _, field := range st.Fields.List {
+		t := p.TypesInfo.TypeOf(field.Type)
+		if t == nil {
+			continue
+		}
+		if len(field.Names) == 0 {
+			// анонимное (встроенное) поле — имя равно имени типа
+			if name := anonFieldName(field.Type); name != "" {
+				fields = append(fields, fieldInfo{name: name, typ: t})
+			}
+			continue
+		}
+		for _, n := range field.Names {
+			if n.Name == "_" {
+				continue
+			}
+			fields = append(fields, fieldInfo{name: n.Name, typ: t})
+		}
+	}
+	return fields
 }
 
 func hasGenerateReset(doc *ast.CommentGroup) bool {
@@ -159,117 +196,161 @@ func hasGenerateReset(doc *ast.CommentGroup) bool {
 	return false
 }
 
-func generateFile(dir string, pkg *pkgInfo) error {
-	var buf bytes.Buffer
-	buf.WriteString("// Code generated by cmd/reset; DO NOT EDIT.\n\n")
-	fmt.Fprintf(&buf, "package %s\n", pkg.name)
+// resetterChecker решает, реализует ли тип интерфейс { Reset() }.
+//
+// Помимо обычной проверки через types.Implements, учитывает структуры,
+// которые генерируются в текущем запуске в том же пакете (generated):
+// на первом запуске метод Reset() для них ещё физически не существует
+// в исходном коде, поэтому types.Implements всегда вернул бы false для
+// самоссылок (см. пример child *ResetableStruct в задании) и ссылок
+// между несколькими генерируемыми структурами одного пакета.
+//
+// Ограничение: ссылки на generate:reset структуры из ДРУГИХ пакетов,
+// ещё ни разу не сгенерированные, на первом запуске распознаны не будут —
+// для них потребуется повторный запуск генератора после того, как
+// зависимый пакет получит свой reset.gen.go.
+type resetterChecker struct {
+	generated map[*types.Named]bool
+}
 
+func newResetterChecker(structs []structInfo) resetterChecker {
+	generated := make(map[*types.Named]bool, len(structs))
+	for _, s := range structs {
+		if s.named != nil {
+			generated[s.named] = true
+		}
+	}
+	return resetterChecker{generated: generated}
+}
+
+func (rc resetterChecker) implementsResetter(t types.Type) bool {
+	if types.Implements(t, resetterIface) {
+		return true
+	}
+	if named := namedOf(t); named != nil {
+		return rc.generated[named]
+	}
+	return false
+}
+
+// namedOf разворачивает указатель и возвращает именованный тип, если он есть.
+func namedOf(t types.Type) *types.Named {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, _ := t.(*types.Named)
+	return named
+}
+
+func generateFile(pkg *pkgInfo) error {
+	var b strings.Builder
+	b.WriteString("// Code generated by cmd/reset; DO NOT EDIT.\n\n")
+	fmt.Fprintf(&b, "package %s\n", pkg.name)
+
+	rc := newResetterChecker(pkg.structs)
 	for _, s := range pkg.structs {
-		buf.WriteString(generateResetMethod(s))
+		b.WriteString(generateResetMethod(s, rc))
 	}
 
-	src, err := format.Source(buf.Bytes())
+	src, err := format.Source([]byte(b.String()))
 	if err != nil {
-		return fmt.Errorf("format error: %w\n--- source ---\n%s", err, buf.String())
+		return fmt.Errorf("format error: %w\n--- source ---\n%s", err, b.String())
 	}
 
-	return os.WriteFile(filepath.Join(dir, "reset.gen.go"), src, 0644)
+	return os.WriteFile(filepath.Join(pkg.dir, "reset.gen.go"), src, 0644)
 }
 
-func generateResetMethod(s structInfo) string {
+func generateResetMethod(s structInfo, rc resetterChecker) string {
 	recv := receiverName(s.name)
-	var buf bytes.Buffer
+	var b strings.Builder
 
-	fmt.Fprintf(&buf, "\nfunc (%s *%s) Reset() {\n", recv, s.name)
-	fmt.Fprintf(&buf, "\tif %s == nil {\n\t\treturn\n\t}\n", recv)
+	fmt.Fprintf(&b, "\nfunc (%s *%s) Reset() {\n", recv, s.name)
+	fmt.Fprintf(&b, "\tif %s == nil {\n\t\treturn\n\t}\n", recv)
 
-	for _, field := range s.fields {
-		for _, name := range field.Names {
-			line := fieldResetLine(recv, name.Name, field.Type)
-			if line != "" {
-				buf.WriteString("\t" + line + "\n")
-			}
-		}
-		// анонимные (встроенные) поля
-		if len(field.Names) == 0 {
-			anonName := anonFieldName(field.Type)
-			if anonName != "" {
-				line := fieldResetLine(recv, anonName, field.Type)
-				if line != "" {
-					buf.WriteString("\t" + line + "\n")
-				}
-			}
+	for _, f := range s.fields {
+		if line := fieldResetLine(recv, f.name, f.typ, rc); line != "" {
+			b.WriteString("\t" + line + "\n")
 		}
 	}
 
-	buf.WriteString("}\n")
-	return buf.String()
+	b.WriteString("}\n")
+	return b.String()
 }
 
-func fieldResetLine(recv, name string, typ ast.Expr) string {
-	switch t := typ.(type) {
-	case *ast.Ident:
-		if zero, ok := primitives[t.Name]; ok {
+// fieldResetLine строит строку сброса для поля recv.name типа t.
+// Возвращает "", если для типа t сброс не требуется или невозможен
+// (функции, каналы, интерфейсы, фиксированные массивы, типы без Reset()).
+func fieldResetLine(recv, name string, t types.Type, rc resetterChecker) string {
+	switch tt := t.(type) {
+	case *types.Basic:
+		if zero, ok := zeroForBasic(tt); ok {
 			return fmt.Sprintf("%s.%s = %s", recv, name, zero)
 		}
-		// именованный тип — проверяем через интерфейс
-		return fmt.Sprintf(
-			"if resetter, ok := any(%s.%s).(interface{ Reset() }); ok {\n\t\tresetter.Reset()\n\t}",
-			recv, name,
-		)
-
-	case *ast.StarExpr:
-		return pointerResetLine(recv, name, t.X)
-
-	case *ast.ArrayType:
-		if t.Len == nil {
-			// слайс
-			return fmt.Sprintf("%s.%s = %s.%s[:0]", recv, name, recv, name)
-		}
-		// массив фиксированной длины — пропускаем
 		return ""
 
-	case *ast.MapType:
+	case *types.Pointer:
+		return pointerResetLine(recv, name, tt, rc)
+
+	case *types.Slice:
+		return fmt.Sprintf("%s.%s = %s.%s[:0]", recv, name, recv, name)
+
+	case *types.Map:
 		return fmt.Sprintf("clear(%s.%s)", recv, name)
 
-	case *ast.SelectorExpr:
-		// внешний тип pkg.Type — проверяем через интерфейс
-		return fmt.Sprintf(
-			"if resetter, ok := any(%s.%s).(interface{ Reset() }); ok {\n\t\tresetter.Reset()\n\t}",
-			recv, name,
-		)
+	case *types.Array, *types.Interface, *types.Signature, *types.Chan:
+		return ""
 
-	case *ast.InterfaceType, *ast.FuncType, *ast.ChanType:
+	default:
+		// именованный тип (в т.ч. обёртка над примитивом), анонимная
+		// структура или тип из другого пакета — сбрасываем только если
+		// он (через адресуемое поле) реализует Reset().
+		if rc.implementsResetter(types.NewPointer(t)) {
+			return fmt.Sprintf("%s.%s.Reset()", recv, name)
+		}
 		return ""
 	}
-	return ""
 }
 
-func pointerResetLine(recv, name string, inner ast.Expr) string {
-	switch t := inner.(type) {
-	case *ast.Ident:
-		if zero, ok := primitives[t.Name]; ok {
+func pointerResetLine(recv, name string, ptr *types.Pointer, rc resetterChecker) string {
+	switch tt := ptr.Elem().(type) {
+	case *types.Basic:
+		if zero, ok := zeroForBasic(tt); ok {
 			return fmt.Sprintf("if %s.%s != nil {\n\t\t*%s.%s = %s\n\t}", recv, name, recv, name, zero)
 		}
-		// указатель на именованный тип
-		return fmt.Sprintf(
-			"if resetter, ok := any(%s.%s).(interface{ Reset() }); ok && %s.%s != nil {\n\t\tresetter.Reset()\n\t}",
-			recv, name, recv, name,
-		)
-	case *ast.SelectorExpr:
-		return fmt.Sprintf(
-			"if resetter, ok := any(%s.%s).(interface{ Reset() }); ok && %s.%s != nil {\n\t\tresetter.Reset()\n\t}",
-			recv, name, recv, name,
-		)
-	case *ast.ArrayType:
-		if t.Len == nil {
-			return fmt.Sprintf("if %s.%s != nil {\n\t\t*%s.%s = (*%s.%s)[:0]\n\t}", recv, name, recv, name, recv, name)
+		return ""
+
+	case *types.Slice:
+		return fmt.Sprintf("if %s.%s != nil {\n\t\t*%s.%s = (*%s.%s)[:0]\n\t}", recv, name, recv, name, recv, name)
+
+	case *types.Map:
+		return fmt.Sprintf("if %s.%s != nil {\n\t\tclear(*%s.%s)\n\t}", recv, name, recv, name)
+
+	case *types.Array:
+		return ""
+
+	default:
+		if rc.implementsResetter(ptr) {
+			return fmt.Sprintf("if %s.%s != nil {\n\t\t%s.%s.Reset()\n\t}", recv, name, recv, name)
 		}
 		return ""
-	case *ast.MapType:
-		return fmt.Sprintf("if %s.%s != nil {\n\t\tclear(*%s.%s)\n\t}", recv, name, recv, name)
 	}
-	return ""
+}
+
+// zeroForBasic возвращает литерал нулевого значения для базового типа b.
+// Второй результат — false для типов без осмысленного нулевого литерала
+// (например, UnsafePointer или Invalid).
+func zeroForBasic(b *types.Basic) (string, bool) {
+	info := b.Info()
+	switch {
+	case info&types.IsBoolean != 0:
+		return "false", true
+	case info&types.IsString != 0:
+		return `""`, true
+	case info&(types.IsInteger|types.IsFloat|types.IsComplex) != 0:
+		return "0", true
+	default:
+		return "", false
+	}
 }
 
 // receiverName строит короткое имя ресивера из CamelCase имени структуры.

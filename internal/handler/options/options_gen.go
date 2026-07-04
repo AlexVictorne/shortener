@@ -2,6 +2,10 @@
 
 package options
 
+import (
+	"shortener/pkg/audit"
+)
+
 type OptHandlerOptionsSetter func(o *HandlerOptions)
 
 func NewHandlerOptions(
@@ -21,11 +25,11 @@ func WithAuthSecret(opt string) OptHandlerOptionsSetter {
 	return func(o *HandlerOptions) { o.AuthSecret = opt }
 }
 
-func WithPinger(opt interface{}) OptHandlerOptionsSetter {
+func WithPinger(opt Pinger) OptHandlerOptionsSetter {
 	return func(o *HandlerOptions) { o.Pinger = opt }
 }
 
-func WithAuditor(opt interface{}) OptHandlerOptionsSetter {
+func WithAuditor(opt audit.Auditor) OptHandlerOptionsSetter {
 	return func(o *HandlerOptions) { o.Auditor = opt }
 }
 

@@ -21,18 +21,19 @@ func BenchmarkTrimURL(b *testing.B) {
 	svc := newTestService()
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	i := 0
+	for b.Loop() {
 		// Уникальный URL на каждую итерацию — иначе вернётся ErrConflict
 		_, _ = svc.TrimURL(ctx, fmt.Sprintf("https://example.com/bench/%d", i))
+		i++
 	}
 }
 
 func BenchmarkBatchShorten(b *testing.B) {
 	ctx := context.Background()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	i := 0
+	for b.Loop() {
 		b.StopTimer()
 		svc := newTestService()
 		items := make([]model.BatchRequestItem, 10)
@@ -44,5 +45,6 @@ func BenchmarkBatchShorten(b *testing.B) {
 		}
 		b.StartTimer()
 		_, _ = svc.BatchShorten(ctx, items)
+		i++
 	}
 }

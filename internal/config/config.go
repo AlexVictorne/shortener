@@ -1,14 +1,21 @@
 // Package config загружает конфигурацию сервиса из переменных окружения,
-// флагов командной строки и JSON-файла конфигурации.
+// флагов командной строки и JSON-файла конфигурации с помощью github.com/spf13/viper.
 // Приоритет: переменная окружения > флаг > файл конфигурации > значение по умолчанию.
+//
+// Флаги разбираются через github.com/spf13/pflag: однобуквенные мнемоники
+// (-a, -b, -f, -d, -s, -c) заданы как shorthand, путь к файлу конфигурации
+// дополнительно доступен в длинной форме --config, остальные флаги
+// (--audit-file, --audit-url, --auth-secret, --tls-cert, --tls-key) существуют
+// только в длинной форме через двойной дефис — это соответствует стандартной
+// GNU/POSIX-конвенции pflag/Cobra (один дефис — короткие флаги, два — длинные).
 package config
 
 import (
-	"encoding/json"
-	"flag"
 	"log"
 	"os"
-	"strconv"
+
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 // Config хранит все параметры конфигурации сервиса.
@@ -22,17 +29,17 @@ type Config struct {
 	// DatabaseDSN — строка подключения к PostgreSQL; флаг -d / env DATABASE_DSN.
 	// Если не задана, используется MemStorage.
 	DatabaseDSN string
-	// AuthSecret — секрет для подписи auth-куки HMAC-SHA256; флаг -s / env AUTH_SECRET.
+	// AuthSecret — секрет для подписи auth-куки HMAC-SHA256; флаг --auth-secret / env AUTH_SECRET.
 	AuthSecret string
-	// AuditFile — путь к файлу аудит-лога (JSON, один объект на строку); флаг -audit-file / env AUDIT_FILE.
+	// AuditFile — путь к файлу аудит-лога (JSON, один объект на строку); флаг --audit-file / env AUDIT_FILE.
 	AuditFile string
-	// AuditURL — URL удаленного приемника аудит-событий (HTTP POST); флаг -audit-url / env AUDIT_URL.
+	// AuditURL — URL удаленного приемника аудит-событий (HTTP POST); флаг --audit-url / env AUDIT_URL.
 	AuditURL string
-	// EnableHTTPS — включает режим HTTPS; флаг -tls / env ENABLE_HTTPS.
+	// EnableHTTPS — включает режим HTTPS; флаг -s / env ENABLE_HTTPS.
 	EnableHTTPS bool
-	// TLSCertFile — путь к PEM-файлу сертификата TLS; флаг -tls-cert / env TLS_CERT_FILE.
+	// TLSCertFile — путь к PEM-файлу сертификата TLS; флаг --tls-cert / env TLS_CERT_FILE.
 	TLSCertFile string
-	// TLSKeyFile — путь к PEM-файлу приватного ключа TLS; флаг -tls-key / env TLS_KEY_FILE.
+	// TLSKeyFile — путь к PEM-файлу приватного ключа TLS; флаг --tls-key / env TLS_KEY_FILE.
 	TLSKeyFile string
 	// TrustedSubnet — строковое представление CIDR доверенной подсети для эндпоинта /api/internal/stats;
 	// флаг -t / env TRUSTED_SUBNET. Пустое значение запрещает любой доступ к эндпоинту.
@@ -42,199 +49,123 @@ type Config struct {
 	GRPCAddress string
 }
 
-// fileConfig содержит параметры конфигурации из JSON-файла.
-// Все поля — указатели: nil означает «поле не задано в файле», что позволяет
-// корректно реализовать приоритет флагов и переменных окружения над значениями из файла.
-type fileConfig struct {
-	// ServerAddress — адрес HTTP-сервера; аналог SERVER_ADDRESS / -a.
-	ServerAddress *string `json:"server_address"`
-	// BaseURL — префикс коротких ссылок; аналог BASE_URL / -b.
-	BaseURL *string `json:"base_url"`
-	// FileStoragePath — путь к файлу хранилища; аналог FILE_STORAGE_PATH / -f.
-	FileStoragePath *string `json:"file_storage_path"`
-	// DatabaseDSN — строка подключения к БД; аналог DATABASE_DSN / -d.
-	DatabaseDSN *string `json:"database_dsn"`
-	// AuthSecret — секрет подписи куки; аналог AUTH_SECRET / -s.
-	AuthSecret *string `json:"auth_secret"`
-	// AuditFile — путь к файлу аудит-лога; аналог AUDIT_FILE / -audit-file.
-	AuditFile *string `json:"audit_file"`
-	// AuditURL — URL удаленного приемника аудита; аналог AUDIT_URL / -audit-url.
-	AuditURL *string `json:"audit_url"`
-	// EnableHTTPS — включает HTTPS; аналог ENABLE_HTTPS / -tls.
-	EnableHTTPS *bool `json:"enable_https"`
-	// TLSCertFile — путь к PEM-сертификату; аналог TLS_CERT_FILE / -tls-cert.
-	TLSCertFile *string `json:"tls_cert_file"`
-	// TLSKeyFile — путь к PEM-ключу; аналог TLS_KEY_FILE / -tls-key.
-	TLSKeyFile *string `json:"tls_key_file"`
-	// TrustedSubnet — CIDR доверенной подсети; аналог TRUSTED_SUBNET / -t.
-	TrustedSubnet *string `json:"trusted_subnet"`
-	// GRPCAddress — адрес gRPC-сервера; аналог GRPC_ADDRESS / -grpc-addr.
-	GRPCAddress *string `json:"grpc_address"`
+// setting описывает один параметр конфигурации: канонический ключ (совпадает с
+// именем поля в JSON-файле конфигурации), длинное имя флага и имя переменной окружения.
+type setting struct {
+	key      string
+	flagName string
+	envName  string
 }
 
-// loadFileConfig читает и разбирает JSON-файл конфигурации по заданному пути.
-// Возвращает nil, nil если путь пустой.
-// При ошибке чтения или разбора файла возвращает ошибку.
-func loadFileConfig(path string) (*fileConfig, error) {
-	if path == "" {
-		return nil, nil
-	}
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var fc fileConfig
-	if err := json.Unmarshal(data, &fc); err != nil {
-		return nil, err
-	}
-
-	return &fc, nil
+var settings = []setting{
+	{"server_address", "server_address", "SERVER_ADDRESS"},
+	{"base_url", "base_url", "BASE_URL"},
+	{"file_storage_path", "file_storage_path", "FILE_STORAGE_PATH"},
+	{"database_dsn", "database_dsn", "DATABASE_DSN"},
+	{"auth_secret", "auth-secret", "AUTH_SECRET"},
+	{"audit_file", "audit-file", "AUDIT_FILE"},
+	{"audit_url", "audit-url", "AUDIT_URL"},
+	{"enable_https", "enable_https", "ENABLE_HTTPS"},
+	{"tls_cert_file", "tls-cert", "TLS_CERT_FILE"},
+	{"tls_key_file", "tls-key", "TLS_KEY_FILE"},
+	{"trusted_subnet", "trusted-subnet", "TRUSTED_SUBNET"},
+	{"grpc_address", "grpc-addr", "GRPC_ADDRESS"},
 }
 
-// resolveString возвращает первое непустое значение в порядке приоритета:
-// env > flagVal > fileVal > defaultVal.
-func resolveString(env, flagVal string, fileVal *string, defaultVal string) string {
-	if env != "" {
-		return env
-	}
-	if flagVal != "" {
-		return flagVal
-	}
-	if fileVal != nil && *fileVal != "" {
-		return *fileVal
-	}
-	return defaultVal
-}
-
-// resolveBool возвращает значение булевого параметра с учетом приоритетов:
-// env (непустой) > flagExplicit (флаг явно передан пользователем) > fileVal > defaultVal.
-func resolveBool(env string, flagVal bool, flagExplicit bool, fileVal *bool, defaultVal bool) bool {
-	if env != "" {
-		v, _ := strconv.ParseBool(env)
-		return v
-	}
-	if flagExplicit {
-		return flagVal
-	}
-	if fileVal != nil {
-		return *fileVal
-	}
-	return defaultVal
-}
+const envNameConfig = "CONFIG"
 
 // LoadConfig читает конфигурацию из JSON-файла, переменных окружения и флагов командной строки.
-// Путь к JSON-файлу задается флагом -c/-config или переменной окружения CONFIG.
+// Путь к JSON-файлу задается флагом -c/--config или переменной окружения CONFIG.
+// Приоритет источников: переменная окружения > флаг > файл конфигурации > значение по умолчанию.
 // Должна вызываться один раз при старте приложения.
 func LoadConfig() *Config {
 	defaultURL := "http://localhost:8080"
 	defaultFileStorage := "shortener_data.json"
 
-	// Имена флагов командной строки
-	const (
-		flagNameConfigFile    = "c"
-		flagNameConfigFile2   = "config"
-		flagNameServerURL     = "a"
-		flagNameBaseURL       = "b"
-		flagNameFileStorage   = "f"
-		flagNameDatabaseDSN   = "d"
-		flagNameAuthSecret    = "s"
-		flagNameAuditFile     = "audit-file"
-		flagNameAuditURL      = "audit-url"
-		flagNameEnableHTTPS   = "tls"
-		flagNameTLSCert       = "tls-cert"
-		flagNameTLSKey        = "tls-key"
-		flagNameTrustedSubnet = "t"
-		flagNameGRPCAddress   = "grpc-addr"
-	)
+	flagSet := pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
+	flagConfigFile := flagSet.StringP("config", "c", "", "path to JSON config file")
+	flagServerURL := flagSet.StringP("server_address", "a", "", "server base url")
+	flagResultURL := flagSet.StringP("base_url", "b", "", "server result url")
+	flagFileStorage := flagSet.StringP("file_storage_path", "f", "", "file storage path")
+	flagDatabaseDSN := flagSet.StringP("database_dsn", "d", "", "database connection DSN")
+	flagAuthSecret := flagSet.String("auth-secret", "", "auth secret for cookies")
+	flagAuditFile := flagSet.String("audit-file", "", "path to audit log file")
+	flagAuditURL := flagSet.String("audit-url", "", "URL of remote audit receiver")
+	flagEnableHTTPS := flagSet.BoolP("enable_https", "s", false, "enable HTTPS mode")
+	flagTLSCert := flagSet.String("tls-cert", "", "path to TLS certificate PEM file")
+	flagTLSKey := flagSet.String("tls-key", "", "path to TLS private key PEM file")
+	flagTrustedSubnet := flagSet.StringP("trusted-subnet", "t", "", "trusted subnet CIDR for /api/internal/stats")
+	flagGRPCAddress := flagSet.String("grpc-addr", "", "gRPC server address (e.g. :3200); empty disables gRPC")
 
-	// Имена переменных окружения
-	const (
-		envNameConfig        = "CONFIG"
-		envNameServerURL     = "SERVER_ADDRESS"
-		envNameBaseURL       = "BASE_URL"
-		envNameFileStorage   = "FILE_STORAGE_PATH"
-		envNameDatabaseDSN   = "DATABASE_DSN"
-		envNameAuthSecret    = "AUTH_SECRET"
-		envNameAuditFile     = "AUDIT_FILE"
-		envNameAuditURL      = "AUDIT_URL"
-		envNameEnableHTTPS   = "ENABLE_HTTPS"
-		envNameTLSCert       = "TLS_CERT_FILE"
-		envNameTLSKey        = "TLS_KEY_FILE"
-		envNameTrustedSubnet = "TRUSTED_SUBNET"
-		envNameGRPCAddress   = "GRPC_ADDRESS"
-	)
+	// Игнорируем нераспознанные флаги (например, флаги тестового раннера go test),
+	// вместо того чтобы завершать процесс с ошибкой.
+	flagSet.ParseErrorsAllowlist = pflag.ParseErrorsAllowlist{UnknownFlags: true}
+	if err := flagSet.Parse(os.Args[1:]); err != nil {
+		log.Fatalf("failed to parse flags: %v", err)
+	}
 
-	// Определяем флаги командной строки
-	flagConfigFile := flag.String(flagNameConfigFile, "", "path to JSON config file")
-	flagConfigFile2 := flag.String(flagNameConfigFile2, "", "path to JSON config file (long form)")
-	flagServerURL := flag.String(flagNameServerURL, "", "server base url")
-	flagResultURL := flag.String(flagNameBaseURL, "", "server result url")
-	flagFileStorage := flag.String(flagNameFileStorage, "", "file storage path")
-	flagDatabaseDSN := flag.String(flagNameDatabaseDSN, "", "database connection DSN")
-	flagAuthSecret := flag.String(flagNameAuthSecret, "", "auth secret for cookies")
-	flagAuditFile := flag.String(flagNameAuditFile, "", "path to audit log file")
-	flagAuditURL := flag.String(flagNameAuditURL, "", "URL of remote audit receiver")
-	flagEnableHTTPS := flag.Bool(flagNameEnableHTTPS, false, "enable HTTPS mode")
-	flagTLSCert := flag.String(flagNameTLSCert, "", "path to TLS certificate PEM file")
-	flagTLSKey := flag.String(flagNameTLSKey, "", "path to TLS private key PEM file")
-	flagTrustedSubnet := flag.String(flagNameTrustedSubnet, "", "trusted subnet CIDR for /api/internal/stats")
-	flagGRPCAddress := flag.String(flagNameGRPCAddress, "", "gRPC server address (e.g. :3200); empty disables gRPC")
-	flag.Parse()
+	v := viper.New()
+	v.SetDefault("server_address", defaultURL)
+	v.SetDefault("base_url", defaultURL)
+	v.SetDefault("file_storage_path", defaultFileStorage)
+	v.SetDefault("auth_secret", "dev_secret")
 
-	// Определяем, какие булевые флаги были явно переданы пользователем
-	explicitFlags := make(map[string]bool)
-	flag.Visit(func(f *flag.Flag) {
-		explicitFlags[f.Name] = true
-	})
+	for _, s := range settings {
+		if err := v.BindEnv(s.key, s.envName); err != nil {
+			log.Fatalf("failed to bind env %q: %v", s.envName, err)
+		}
+	}
 
-	// Определяем путь к файлу конфигурации: env CONFIG > флаг -c/-config
+	// Путь к файлу конфигурации: env CONFIG > флаг -c/--config
 	configPath := os.Getenv(envNameConfig)
 	if configPath == "" {
 		configPath = *flagConfigFile
 	}
-	if configPath == "" {
-		configPath = *flagConfigFile2
+
+	if configPath != "" {
+		v.SetConfigFile(configPath)
+		v.SetConfigType("json")
+		if err := v.ReadInConfig(); err != nil {
+			log.Fatalf("failed to load config file %q: %v", configPath, err)
+		}
 	}
 
-	// Загружаем файл конфигурации (если путь задан)
-	fc, err := loadFileConfig(configPath)
-	if err != nil {
-		log.Fatalf("failed to load config file %q: %v", configPath, err)
+	// Флаги применяются поверх файла/default, но только если они были явно
+	// переданы пользователем и соответствующая переменная окружения не задана —
+	// иначе итоговое значение и так возьмётся viper из env-слоя (BindEnv выше),
+	// что сохраняет приоритет "env > флаг".
+	setIfExplicit := func(s setting, val *string) {
+		if flagSet.Changed(s.flagName) && os.Getenv(s.envName) == "" {
+			v.Set(s.key, *val)
+		}
 	}
-
-	// Читаем переменные окружения
-	envServerURL := os.Getenv(envNameServerURL)
-	envResultURL := os.Getenv(envNameBaseURL)
-	envFileStorage := os.Getenv(envNameFileStorage)
-	envDatabaseDSN := os.Getenv(envNameDatabaseDSN)
-	envAuthSecret := os.Getenv(envNameAuthSecret)
-	envAuditFile := os.Getenv(envNameAuditFile)
-	envAuditURL := os.Getenv(envNameAuditURL)
-	envEnableHTTPS := os.Getenv(envNameEnableHTTPS)
-	envTLSCert := os.Getenv(envNameTLSCert)
-	envTLSKey := os.Getenv(envNameTLSKey)
-	envTrustedSubnet := os.Getenv(envNameTrustedSubnet)
-	envGRPCAddress := os.Getenv(envNameGRPCAddress)
-
-	// Если файл конфигурации не задан, используем пустую структуру для упрощения кода ниже
-	if fc == nil {
-		fc = &fileConfig{}
+	setIfExplicit(settings[0], flagServerURL)
+	setIfExplicit(settings[1], flagResultURL)
+	setIfExplicit(settings[2], flagFileStorage)
+	setIfExplicit(settings[3], flagDatabaseDSN)
+	setIfExplicit(settings[4], flagAuthSecret)
+	setIfExplicit(settings[5], flagAuditFile)
+	setIfExplicit(settings[6], flagAuditURL)
+	setIfExplicit(settings[8], flagTLSCert)
+	setIfExplicit(settings[9], flagTLSKey)
+	setIfExplicit(settings[10], flagTrustedSubnet)
+	setIfExplicit(settings[11], flagGRPCAddress)
+	if flagSet.Changed("enable_https") && os.Getenv("ENABLE_HTTPS") == "" {
+		v.Set("enable_https", *flagEnableHTTPS)
 	}
 
 	return &Config{
-		BaseURL:         resolveString(envServerURL, *flagServerURL, fc.ServerAddress, defaultURL),
-		ResultURL:       resolveString(envResultURL, *flagResultURL, fc.BaseURL, defaultURL),
-		FileStoragePath: resolveString(envFileStorage, *flagFileStorage, fc.FileStoragePath, defaultFileStorage),
-		DatabaseDSN:     resolveString(envDatabaseDSN, *flagDatabaseDSN, fc.DatabaseDSN, ""),
-		AuthSecret:      resolveString(envAuthSecret, *flagAuthSecret, fc.AuthSecret, "dev_secret"),
-		AuditFile:       resolveString(envAuditFile, *flagAuditFile, fc.AuditFile, ""),
-		AuditURL:        resolveString(envAuditURL, *flagAuditURL, fc.AuditURL, ""),
-		EnableHTTPS:     resolveBool(envEnableHTTPS, *flagEnableHTTPS, explicitFlags[flagNameEnableHTTPS], fc.EnableHTTPS, false),
-		TLSCertFile:     resolveString(envTLSCert, *flagTLSCert, fc.TLSCertFile, ""),
-		TLSKeyFile:      resolveString(envTLSKey, *flagTLSKey, fc.TLSKeyFile, ""),
-		TrustedSubnet:   resolveString(envTrustedSubnet, *flagTrustedSubnet, fc.TrustedSubnet, ""),
-		GRPCAddress:     resolveString(envGRPCAddress, *flagGRPCAddress, fc.GRPCAddress, ""),
+		BaseURL:         v.GetString("server_address"),
+		ResultURL:       v.GetString("base_url"),
+		FileStoragePath: v.GetString("file_storage_path"),
+		DatabaseDSN:     v.GetString("database_dsn"),
+		AuthSecret:      v.GetString("auth_secret"),
+		AuditFile:       v.GetString("audit_file"),
+		AuditURL:        v.GetString("audit_url"),
+		EnableHTTPS:     v.GetBool("enable_https"),
+		TLSCertFile:     v.GetString("tls_cert_file"),
+		TLSKeyFile:      v.GetString("tls_key_file"),
+		TrustedSubnet:   v.GetString("trusted_subnet"),
+		GRPCAddress:     v.GetString("grpc_address"),
 	}
 }
