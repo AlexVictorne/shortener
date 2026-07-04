@@ -1,8 +1,6 @@
 package config
 
 import (
-	"flag"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,16 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-// resetFlags сбрасывает глобальный flag.CommandLine перед каждым тестом,
-// чтобы повторный вызов flag.Parse() не вызывал ошибку «flag redefined».
-// Вывод направляется в io.Discard, чтобы скрыть «flag provided but not defined»
-// для внутренних флагов тестового runner.
-func resetFlags() {
-	fs := flag.NewFlagSet("", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	flag.CommandLine = fs
-}
 
 // writeConfigFile создает временный JSON-файл конфигурации в директории t.TempDir()
 // и возвращает путь к нему.
@@ -43,7 +31,6 @@ func TestLoadConfig_FileConfig_AppliedWhenNoEnvOrFlag(t *testing.T) {
 	}`)
 	t.Setenv("CONFIG", path)
 
-	resetFlags()
 	cfg := LoadConfig()
 	require.NotNil(t, cfg)
 
@@ -58,7 +45,6 @@ func TestLoadConfig_EnvOverridesFileConfig(t *testing.T) {
 	t.Setenv("CONFIG", path)
 	t.Setenv("SERVER_ADDRESS", "localhost:4444")
 
-	resetFlags()
 	cfg := LoadConfig()
 	require.NotNil(t, cfg)
 
@@ -70,7 +56,6 @@ func TestLoadConfig_FileConfigPath_ViaEnvCONFIG(t *testing.T) {
 	path := writeConfigFile(t, `{"auth_secret": "from-file-secret"}`)
 	t.Setenv("CONFIG", path)
 
-	resetFlags()
 	cfg := LoadConfig()
 	require.NotNil(t, cfg)
 
@@ -82,7 +67,6 @@ func TestLoadConfig_EnableHTTPS_FileConfig(t *testing.T) {
 	path := writeConfigFile(t, `{"enable_https": true}`)
 	t.Setenv("CONFIG", path)
 
-	resetFlags()
 	cfg := LoadConfig()
 	require.NotNil(t, cfg)
 
@@ -95,7 +79,6 @@ func TestLoadConfig_EnableHTTPS_EnvOverridesFileConfig(t *testing.T) {
 	t.Setenv("CONFIG", path)
 	t.Setenv("ENABLE_HTTPS", "false")
 
-	resetFlags()
 	cfg := LoadConfig()
 	require.NotNil(t, cfg)
 
@@ -118,7 +101,6 @@ func TestLoadConfig_FileConfig_AllFields(t *testing.T) {
 	}`)
 	t.Setenv("CONFIG", path)
 
-	resetFlags()
 	cfg := LoadConfig()
 	require.NotNil(t, cfg)
 
@@ -138,7 +120,6 @@ func TestLoadConfig_FileConfig_MissingFile_FatalExit(t *testing.T) {
 	// Несуществующий файл конфигурации должен завершить программу с ненулевым кодом
 	if os.Getenv("TEST_FATAL_CONFIG") == "1" {
 		os.Setenv("CONFIG", "/nonexistent/config.json") //nolint:errcheck
-		resetFlags()
 		LoadConfig()
 		return
 	}
@@ -159,7 +140,6 @@ func TestLoadConfig_InvalidJSONConfig_FatalExit(t *testing.T) {
 		path := filepath.Join(dir, "config.json")
 		require.NoError(t, os.WriteFile(path, []byte("{invalid json"), 0o600))
 		os.Setenv("CONFIG", path) //nolint:errcheck
-		resetFlags()
 		LoadConfig()
 		return
 	}
@@ -175,7 +155,6 @@ func TestLoadConfig_FileConfigPath_ViaFlag(t *testing.T) {
 	// Путь к файлу конфигурации может быть задан флагом -c (короткая форма)
 	path := writeConfigFile(t, `{"server_address": "localhost:3131"}`)
 
-	resetFlags()
 	origArgs := os.Args
 	defer func() { os.Args = origArgs }()
 	os.Args = []string{origArgs[0], "-c", path}
@@ -186,13 +165,12 @@ func TestLoadConfig_FileConfigPath_ViaFlag(t *testing.T) {
 }
 
 func TestLoadConfig_FileConfigPath_ViaLongFlag(t *testing.T) {
-	// Путь к файлу конфигурации может быть задан флагом -config (длинная форма)
+	// Путь к файлу конфигурации может быть задан флагом --config (длинная форма)
 	path := writeConfigFile(t, `{"server_address": "localhost:3232"}`)
 
-	resetFlags()
 	origArgs := os.Args
 	defer func() { os.Args = origArgs }()
-	os.Args = []string{origArgs[0], "-config", path}
+	os.Args = []string{origArgs[0], "--config", path}
 
 	cfg := LoadConfig()
 
@@ -203,7 +181,6 @@ func TestLoadConfig_FlagOverridesFileConfig(t *testing.T) {
 	// Явно переданный флаг перекрывает значение из файла конфигурации (когда env не задана)
 	path := writeConfigFile(t, `{"server_address": "localhost:9191", "enable_https": false}`)
 
-	resetFlags()
 	origArgs := os.Args
 	defer func() { os.Args = origArgs }()
 	os.Args = []string{origArgs[0], "-c", path, "-a", "localhost:2222", "-s"}
@@ -216,7 +193,6 @@ func TestLoadConfig_FlagOverridesFileConfig(t *testing.T) {
 
 func TestLoadConfig_Defaults_NoSources(t *testing.T) {
 	// Без файла, env и флагов должны применяться значения по умолчанию
-	resetFlags()
 	cfg := LoadConfig()
 
 	assert.Equal(t, "http://localhost:8080", cfg.BaseURL)
@@ -234,7 +210,6 @@ func TestLoadConfig_Defaults_NoSources(t *testing.T) {
 func TestLoadConfig_EnableHTTPS_EnvTrue(t *testing.T) {
 	t.Setenv("ENABLE_HTTPS", "true")
 
-	resetFlags()
 	cfg := LoadConfig()
 
 	require.NotNil(t, cfg)
@@ -244,7 +219,6 @@ func TestLoadConfig_EnableHTTPS_EnvTrue(t *testing.T) {
 func TestLoadConfig_EnableHTTPS_Env1(t *testing.T) {
 	t.Setenv("ENABLE_HTTPS", "1")
 
-	resetFlags()
 	cfg := LoadConfig()
 
 	assert.True(t, cfg.EnableHTTPS)
@@ -253,7 +227,6 @@ func TestLoadConfig_EnableHTTPS_Env1(t *testing.T) {
 func TestLoadConfig_EnableHTTPS_EnvFalse(t *testing.T) {
 	t.Setenv("ENABLE_HTTPS", "false")
 
-	resetFlags()
 	cfg := LoadConfig()
 
 	assert.False(t, cfg.EnableHTTPS)
@@ -261,7 +234,6 @@ func TestLoadConfig_EnableHTTPS_EnvFalse(t *testing.T) {
 
 func TestLoadConfig_EnableHTTPS_EnvEmpty(t *testing.T) {
 	// ENABLE_HTTPS не задана — должен использоваться флаг (false по умолчанию)
-	resetFlags()
 	cfg := LoadConfig()
 
 	assert.False(t, cfg.EnableHTTPS)
@@ -271,7 +243,6 @@ func TestLoadConfig_TLSCertKey_Env(t *testing.T) {
 	t.Setenv("TLS_CERT_FILE", "/etc/ssl/cert.pem")
 	t.Setenv("TLS_KEY_FILE", "/etc/ssl/key.pem")
 
-	resetFlags()
 	cfg := LoadConfig()
 
 	assert.Equal(t, "/etc/ssl/cert.pem", cfg.TLSCertFile)
@@ -279,7 +250,6 @@ func TestLoadConfig_TLSCertKey_Env(t *testing.T) {
 }
 
 func TestLoadConfig_TLSCertKey_Defaults(t *testing.T) {
-	resetFlags()
 	cfg := LoadConfig()
 
 	assert.Empty(t, cfg.TLSCertFile)
@@ -290,7 +260,6 @@ func TestLoadConfig_EnableHTTPS_EnvOverridesFlag(t *testing.T) {
 	// env ENABLE_HTTPS=true должна перекрывать значение флага по умолчанию
 	t.Setenv("ENABLE_HTTPS", "true")
 	// Флаг -s по умолчанию false; env должна вернуть true
-	resetFlags()
 	cfg := LoadConfig()
 
 	assert.True(t, cfg.EnableHTTPS, "env must override flag default")
@@ -300,7 +269,6 @@ func TestLoadConfig_EnvOverridesExplicitFlag(t *testing.T) {
 	// env должна перекрывать даже явно переданный флаг (приоритет env > флаг > файл > default)
 	t.Setenv("SERVER_ADDRESS", "localhost:5555")
 
-	resetFlags()
 	origArgs := os.Args
 	defer func() { os.Args = origArgs }()
 	os.Args = []string{origArgs[0], "-a", "localhost:1111"}
