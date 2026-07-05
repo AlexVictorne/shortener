@@ -154,37 +154,42 @@ func (s *Server) ListUserURLs(ctx context.Context, _ *emptypb.Empty) (*pb.UserUR
 	return &pb.UserURLsResponse{Url: data}, nil
 }
 
+// verifyAuthHeader читает и верифицирует заголовок "authorization" из входящих
+// gRPC metadata. Формат значения: "userID:HMAC-SHA256" — совпадает с HTTP-кукой
+// auth_token. Возвращает (userID, true) при валидной подписи или ("", false),
+// если заголовок отсутствует либо подпись невалидна
+func verifyAuthHeader(ctx context.Context, secret string) (string, bool) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	if vals := md.Get("authorization"); len(vals) > 0 {
+		if userID, ok := auth.Verify(vals[0], secret); ok {
+			return userID, true
+		}
+	}
+	return "", false
+}
+
 // extractUserID читает заголовок "authorization" из входящих gRPC metadata.
-// Формат значения: "userID:HMAC-SHA256" — совпадает с HTTP-кукой auth_token.
 // Если заголовок отсутствует или HMAC-подпись невалидна, генерирует новый userID
 // (поведение аналогично HTTP AuthMiddleware: каждый анонимный клиент получает ID).
 // Возвращает userID и обогащенный контекст.
 func extractUserID(ctx context.Context, secret string) (string, context.Context) {
-	md, _ := metadata.FromIncomingContext(ctx)
-	if vals := md.Get("authorization"); len(vals) > 0 {
-		if userID, ok := auth.Verify(vals[0], secret); ok {
-			ctx = context.WithValue(ctx, middleware.UserIDKey, userID)
-			return userID, ctx
-		}
+	userID, ok := verifyAuthHeader(ctx, secret)
+	if !ok {
+		// Заголовок отсутствует или подпись невалидна — генерируем временный userID.
+		userID, _ = auth.NewUserID()
 	}
-	// Заголовок отсутствует или подпись невалидна — генерируем временный userID.
-	userID, _ := auth.NewUserID()
-	ctx = context.WithValue(ctx, middleware.UserIDKey, userID)
-	return userID, ctx
+	return userID, context.WithValue(ctx, middleware.UserIDKey, userID)
 }
 
 // extractUserIDStrict читает и верифицирует заголовок "authorization" из metadata.
 // В отличие от extractUserID, не генерирует новый userID при ошибке верификации.
 // Возвращает (userID, ctx, true) при успехе или ("", ctx, false) если авторизация отсутствует/невалидна.
 func extractUserIDStrict(ctx context.Context, secret string) (string, context.Context, bool) {
-	md, _ := metadata.FromIncomingContext(ctx)
-	if vals := md.Get("authorization"); len(vals) > 0 {
-		if userID, ok := auth.Verify(vals[0], secret); ok {
-			ctx = context.WithValue(ctx, middleware.UserIDKey, userID)
-			return userID, ctx, true
-		}
+	userID, ok := verifyAuthHeader(ctx, secret)
+	if !ok {
+		return "", ctx, false
 	}
-	return "", ctx, false
+	return userID, context.WithValue(ctx, middleware.UserIDKey, userID), true
 }
 
 // mapServiceError преобразует ошибки пакета service в gRPC-статусы. op — имя

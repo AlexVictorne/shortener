@@ -53,7 +53,7 @@ func TestRun_GracefulShutdownOnContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	err := run(ctx, server, nil, nil, "", cfg, func() {})
+	err := run(ctx, servers{http: server}, cfg, func() {})
 	if err != nil {
 		t.Errorf("expected nil error on clean shutdown, got: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestRun_OnShutdownCalledOnSignal(t *testing.T) {
 		cancel()
 	}()
 
-	_ = run(ctx, server, nil, nil, "", cfg, func() {
+	_ = run(ctx, servers{http: server}, cfg, func() {
 		called.Store(true)
 	})
 
@@ -109,7 +109,7 @@ func TestRun_OnShutdownCalledOnStartupError(t *testing.T) {
 
 	var called atomic.Bool
 
-	err = run(ctx, server, nil, nil, "", cfg, func() {
+	err = run(ctx, servers{http: server}, cfg, func() {
 		called.Store(true)
 	})
 
@@ -149,7 +149,7 @@ func TestRun_InFlightRequestCompletes(t *testing.T) {
 
 	runDone := make(chan error, 1)
 	go func() {
-		runDone <- run(ctx, server, nil, nil, "", cfg, func() {})
+		runDone <- run(ctx, servers{http: server}, cfg, func() {})
 	}()
 
 	// Ждем, пока сервер поднимется
@@ -207,7 +207,7 @@ func TestRun_GRPCGracefulShutdownOnContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	err := run(ctx, server, nil, grpcSrv, grpcAddr, cfg, func() {})
+	err := run(ctx, servers{http: server, grpc: grpcSrv, grpcAddr: grpcAddr}, cfg, func() {})
 	if err != nil {
 		t.Errorf("expected nil error on clean shutdown, got: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestRun_GRPCStartupErrorStopsHTTPServer(t *testing.T) {
 
 	var called atomic.Bool
 
-	err = run(ctx, server, nil, grpcSrv, grpcAddr, cfg, func() {
+	err = run(ctx, servers{http: server, grpc: grpcSrv, grpcAddr: grpcAddr}, cfg, func() {
 		called.Store(true)
 	})
 
@@ -272,7 +272,7 @@ func TestRun_PprofServerStoppedOnShutdown(t *testing.T) {
 
 	runDone := make(chan error, 1)
 	go func() {
-		runDone <- run(ctx, server, pprofServer, nil, "", cfg, func() {})
+		runDone <- run(ctx, servers{http: server, pprof: pprofServer}, cfg, func() {})
 	}()
 
 	// Ждем, пока pprof-сервер поднимется, и убеждаемся, что порт слушается.

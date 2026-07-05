@@ -147,7 +147,14 @@ func main() {
 		auditor.Close()
 	}
 
-	if err := run(ctx, server, pprofServer, grpcSrv, cfg.GRPCAddress, cfg, onShutdown); err != nil {
+	srv := servers{
+		http:     server,
+		pprof:    pprofServer,
+		grpc:     grpcSrv,
+		grpcAddr: cfg.GRPCAddress,
+	}
+
+	if err := run(ctx, srv, cfg, onShutdown); err != nil {
 		log.Fatalf("Server error: %v", err)
 	}
 }
