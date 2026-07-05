@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,6 +32,9 @@ var (
 	buildCommit  string
 )
 
+// main инициализирует конфигурацию, хранилище, сервисы и запускает HTTP-сервер.
+// Завершение выполняется корректно при получении SIGINT, SIGTERM или SIGQUIT:
+// все активные запросы дообрабатываются, несохраненные данные сбрасываются в хранилище.
 func main() {
 	fmt.Println(buildinfo.Format(buildVersion, buildDate, buildCommit))
 
@@ -69,7 +71,6 @@ func main() {
 		log.Println("Using in-memory storage (MemStorage)")
 		store = memStore
 	}
-	defer store.Close()
 
 	idGenerator := generator.NewGenerator(8)
 
@@ -80,7 +81,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("audit initialization error: %v", err)
 	}
-	defer auditor.Close()
 
 	handlerOpts := []options.OptHandlerOptionsSetter{
 		options.WithAuthSecret(cfg.AuthSecret),
@@ -111,35 +111,18 @@ func main() {
 		}
 	}()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// Перехватываем SIGINT, SIGTERM и SIGQUIT для корректного завершения
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	defer stop()
 
-	errChan := make(chan error, 1)
+	// onShutdown вызывается гарантированно при любом завершении сервера:
+	// сохраняет данные и освобождает ресурсы
+	onShutdown := func() {
+		store.Close()
+		auditor.Close()
+	}
 
-	go func() {
-		log.Printf("Server starting on %s", serverAddr.String())
-		log.Printf("Result link direct to: %s", cfg.ResultURL)
-		err := server.ListenAndServe()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errChan <- err
-		} else {
-			errChan <- nil
-		}
-	}()
-
-	select {
-	case <-ctx.Done():
-		log.Println("Shutdown server...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("Server shutdown error: %v", err)
-		}
-		log.Println("Server stopped")
-	case err := <-errChan:
-		if err != nil {
-			stop()
-			log.Fatalf("Server error: %v", err)
-		}
+	if err := run(ctx, server, cfg, onShutdown); err != nil {
+		log.Fatalf("Server error: %v", err)
 	}
 }

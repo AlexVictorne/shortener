@@ -1,10 +1,21 @@
-// Package config загружает конфигурацию сервиса из переменных окружения и флагов командной строки.
-// Приоритет: переменная окружения > флаг > значение по умолчанию.
+// Package config загружает конфигурацию сервиса из переменных окружения,
+// флагов командной строки и JSON-файла конфигурации с помощью github.com/spf13/viper.
+// Приоритет: переменная окружения > флаг > файл конфигурации > значение по умолчанию.
+//
+// Флаги разбираются через github.com/spf13/pflag: однобуквенные мнемоники
+// (-a, -b, -f, -d, -s, -c) заданы как shorthand, путь к файлу конфигурации
+// дополнительно доступен в длинной форме --config, остальные флаги
+// (--audit-file, --audit-url, --auth-secret, --tls-cert, --tls-key) существуют
+// только в длинной форме через двойной дефис — это соответствует стандартной
+// GNU/POSIX-конвенции pflag/Cobra (один дефис — короткие флаги, два — длинные).
 package config
 
 import (
-	"flag"
+	"log"
 	"os"
+
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 // Config хранит все параметры конфигурации сервиса.
@@ -18,111 +29,129 @@ type Config struct {
 	// DatabaseDSN — строка подключения к PostgreSQL; флаг -d / env DATABASE_DSN.
 	// Если не задана, используется MemStorage.
 	DatabaseDSN string
-	// AuthSecret — секрет для подписи auth-куки HMAC-SHA256; флаг -s / env AUTH_SECRET.
+	// AuthSecret — секрет для подписи auth-куки HMAC-SHA256; флаг --auth-secret / env AUTH_SECRET.
 	AuthSecret string
-	// AuditFile — путь к файлу аудит-лога (JSON, один объект на строку); флаг -audit-file / env AUDIT_FILE.
+	// AuditFile — путь к файлу аудит-лога (JSON, один объект на строку); флаг --audit-file / env AUDIT_FILE.
 	AuditFile string
-	// AuditURL — URL удалённого приёмника аудит-событий (HTTP POST); флаг -audit-url / env AUDIT_URL.
+	// AuditURL — URL удаленного приемника аудит-событий (HTTP POST); флаг --audit-url / env AUDIT_URL.
 	AuditURL string
+	// EnableHTTPS — включает режим HTTPS; флаг -s / env ENABLE_HTTPS.
+	EnableHTTPS bool
+	// TLSCertFile — путь к PEM-файлу сертификата TLS; флаг --tls-cert / env TLS_CERT_FILE.
+	TLSCertFile string
+	// TLSKeyFile — путь к PEM-файлу приватного ключа TLS; флаг --tls-key / env TLS_KEY_FILE.
+	TLSKeyFile string
 }
 
-// LoadConfig читает конфигурацию из окружения и флагов командной строки.
+// setting описывает один параметр конфигурации: канонический ключ (совпадает с
+// именем поля в JSON-файле конфигурации), длинное имя флага и имя переменной окружения.
+type setting struct {
+	key      string
+	flagName string
+	envName  string
+}
+
+var settings = []setting{
+	{"server_address", "server_address", "SERVER_ADDRESS"},
+	{"base_url", "base_url", "BASE_URL"},
+	{"file_storage_path", "file_storage_path", "FILE_STORAGE_PATH"},
+	{"database_dsn", "database_dsn", "DATABASE_DSN"},
+	{"auth_secret", "auth-secret", "AUTH_SECRET"},
+	{"audit_file", "audit-file", "AUDIT_FILE"},
+	{"audit_url", "audit-url", "AUDIT_URL"},
+	{"enable_https", "enable_https", "ENABLE_HTTPS"},
+	{"tls_cert_file", "tls-cert", "TLS_CERT_FILE"},
+	{"tls_key_file", "tls-key", "TLS_KEY_FILE"},
+}
+
+const envNameConfig = "CONFIG"
+
+// LoadConfig читает конфигурацию из JSON-файла, переменных окружения и флагов командной строки.
+// Путь к JSON-файлу задается флагом -c/--config или переменной окружения CONFIG.
+// Приоритет источников: переменная окружения > флаг > файл конфигурации > значение по умолчанию.
 // Должна вызываться один раз при старте приложения.
 func LoadConfig() *Config {
 	defaultURL := "http://localhost:8080"
 	defaultFileStorage := "shortener_data.json"
 
-	flagNameServerURL := "a"
-	envNameServerURL := "SERVER_ADDRESS"
-	flagNameBaseURL := "b"
-	envNameBaseURL := "BASE_URL"
-	flagNameFileStorage := "f"
-	envNameFileStorage := "FILE_STORAGE_PATH"
-	flagNameDatabaseDSN := "d"
-	envNameDatabaseDSN := "DATABASE_DSN"
-	flagNameAuthSecret := "s"
-	envNameAuthSecret := "AUTH_SECRET"
-	flagNameAuditFile := "audit-file"
-	envNameAuditFile := "AUDIT_FILE"
-	flagNameAuditURL := "audit-url"
-	envNameAuditURL := "AUDIT_URL"
+	flagSet := pflag.NewFlagSet(os.Args[0], pflag.ContinueOnError)
+	flagConfigFile := flagSet.StringP("config", "c", "", "path to JSON config file")
+	flagServerURL := flagSet.StringP("server_address", "a", "", "server base url")
+	flagResultURL := flagSet.StringP("base_url", "b", "", "server result url")
+	flagFileStorage := flagSet.StringP("file_storage_path", "f", "", "file storage path")
+	flagDatabaseDSN := flagSet.StringP("database_dsn", "d", "", "database connection DSN")
+	flagAuthSecret := flagSet.String("auth-secret", "", "auth secret for cookies")
+	flagAuditFile := flagSet.String("audit-file", "", "path to audit log file")
+	flagAuditURL := flagSet.String("audit-url", "", "URL of remote audit receiver")
+	flagEnableHTTPS := flagSet.BoolP("enable_https", "s", false, "enable HTTPS mode")
+	flagTLSCert := flagSet.String("tls-cert", "", "path to TLS certificate PEM file")
+	flagTLSKey := flagSet.String("tls-key", "", "path to TLS private key PEM file")
 
-	var serverURL string
-	var resultURL string
-	var fileStoragePath string
-	var databaseDSN string
-	var authSecret string
-	var auditFile string
-	var auditURL string
-
-	flagServerURL := flag.String(flagNameServerURL, "", "server base url")
-	flagResultURL := flag.String(flagNameBaseURL, "", "server result url")
-	flagFileStorage := flag.String(flagNameFileStorage, "", "file storage path")
-	flagDatabaseDSN := flag.String(flagNameDatabaseDSN, "", "database connection DSN")
-	flagAuthSecret := flag.String(flagNameAuthSecret, "", "auth secret for cookies")
-	flagAuditFile := flag.String(flagNameAuditFile, "", "path to audit log file")
-	flagAuditURL := flag.String(flagNameAuditURL, "", "URL of remote audit receiver")
-	flag.Parse()
-
-	// Приоритет: объявленная переменная окружения (в т.ч. пустая) > флаг > значение по умолчанию.
-	// LookupEnv отличает необъявленную переменную от явно заданной пустой строки.
-	if val, ok := os.LookupEnv(envNameServerURL); ok {
-		serverURL = val
-	} else if *flagServerURL != "" {
-		serverURL = *flagServerURL
-	} else {
-		serverURL = defaultURL
+	// Игнорируем нераспознанные флаги (например, флаги тестового раннера go test),
+	// вместо того чтобы завершать процесс с ошибкой.
+	flagSet.ParseErrorsAllowlist = pflag.ParseErrorsAllowlist{UnknownFlags: true}
+	if err := flagSet.Parse(os.Args[1:]); err != nil {
+		log.Fatalf("failed to parse flags: %v", err)
 	}
 
-	if val, ok := os.LookupEnv(envNameBaseURL); ok {
-		resultURL = val
-	} else if *flagResultURL != "" {
-		resultURL = *flagResultURL
-	} else {
-		resultURL = defaultURL
+	v := viper.New()
+	v.SetDefault("server_address", defaultURL)
+	v.SetDefault("base_url", defaultURL)
+	v.SetDefault("file_storage_path", defaultFileStorage)
+	v.SetDefault("auth_secret", "dev_secret")
+
+	for _, s := range settings {
+		if err := v.BindEnv(s.key, s.envName); err != nil {
+			log.Fatalf("failed to bind env %q: %v", s.envName, err)
+		}
 	}
 
-	if val, ok := os.LookupEnv(envNameFileStorage); ok {
-		fileStoragePath = val
-	} else if *flagFileStorage != "" {
-		fileStoragePath = *flagFileStorage
-	} else {
-		fileStoragePath = defaultFileStorage
+	// Путь к файлу конфигурации: env CONFIG > флаг -c/--config
+	configPath := os.Getenv(envNameConfig)
+	if configPath == "" {
+		configPath = *flagConfigFile
 	}
 
-	if val, ok := os.LookupEnv(envNameDatabaseDSN); ok {
-		databaseDSN = val
-	} else if *flagDatabaseDSN != "" {
-		databaseDSN = *flagDatabaseDSN
+	if configPath != "" {
+		v.SetConfigFile(configPath)
+		v.SetConfigType("json")
+		if err := v.ReadInConfig(); err != nil {
+			log.Fatalf("failed to load config file %q: %v", configPath, err)
+		}
 	}
 
-	if val, ok := os.LookupEnv(envNameAuthSecret); ok {
-		authSecret = val
-	} else if *flagAuthSecret != "" {
-		authSecret = *flagAuthSecret
-	} else {
-		authSecret = "dev_secret"
+	// Флаги применяются поверх файла/default, но только если они были явно
+	// переданы пользователем и соответствующая переменная окружения не задана —
+	// иначе итоговое значение и так возьмётся viper из env-слоя (BindEnv выше),
+	// что сохраняет приоритет "env > флаг".
+	setIfExplicit := func(s setting, val *string) {
+		if flagSet.Changed(s.flagName) && os.Getenv(s.envName) == "" {
+			v.Set(s.key, *val)
+		}
 	}
-
-	if val, ok := os.LookupEnv(envNameAuditFile); ok {
-		auditFile = val
-	} else if *flagAuditFile != "" {
-		auditFile = *flagAuditFile
-	}
-
-	if val, ok := os.LookupEnv(envNameAuditURL); ok {
-		auditURL = val
-	} else if *flagAuditURL != "" {
-		auditURL = *flagAuditURL
+	setIfExplicit(settings[0], flagServerURL)
+	setIfExplicit(settings[1], flagResultURL)
+	setIfExplicit(settings[2], flagFileStorage)
+	setIfExplicit(settings[3], flagDatabaseDSN)
+	setIfExplicit(settings[4], flagAuthSecret)
+	setIfExplicit(settings[5], flagAuditFile)
+	setIfExplicit(settings[6], flagAuditURL)
+	setIfExplicit(settings[8], flagTLSCert)
+	setIfExplicit(settings[9], flagTLSKey)
+	if flagSet.Changed("enable_https") && os.Getenv("ENABLE_HTTPS") == "" {
+		v.Set("enable_https", *flagEnableHTTPS)
 	}
 
 	return &Config{
-		BaseURL:         serverURL,
-		ResultURL:       resultURL,
-		FileStoragePath: fileStoragePath,
-		DatabaseDSN:     databaseDSN,
-		AuthSecret:      authSecret,
-		AuditFile:       auditFile,
-		AuditURL:        auditURL,
+		BaseURL:         v.GetString("server_address"),
+		ResultURL:       v.GetString("base_url"),
+		FileStoragePath: v.GetString("file_storage_path"),
+		DatabaseDSN:     v.GetString("database_dsn"),
+		AuthSecret:      v.GetString("auth_secret"),
+		AuditFile:       v.GetString("audit_file"),
+		AuditURL:        v.GetString("audit_url"),
+		EnableHTTPS:     v.GetBool("enable_https"),
+		TLSCertFile:     v.GetString("tls_cert_file"),
+		TLSKeyFile:      v.GetString("tls_key_file"),
 	}
 }
