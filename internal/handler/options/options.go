@@ -13,8 +13,12 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// HandlerOptions содержит параметры для настройки Handler.
 type HandlerOptions struct {
 	AuthSecret string
 	Pinger     Pinger
 	Auditor    audit.Auditor
+	// TrustedSubnet — строковый CIDR доверенной подсети для эндпоинта /api/internal/stats.
+	// Пустое значение запрещает доступ к эндпоинту для любых запросов.
+	TrustedSubnet string
 }

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"shortener/internal/config"
 )
 
@@ -51,7 +53,7 @@ func TestRun_GracefulShutdownOnContextCancel(t *testing.T) {
 		cancel()
 	}()
 
-	err := run(ctx, server, cfg, func() {})
+	err := run(ctx, servers{http: server}, cfg, func() {})
 	if err != nil {
 		t.Errorf("expected nil error on clean shutdown, got: %v", err)
 	}
@@ -76,7 +78,7 @@ func TestRun_OnShutdownCalledOnSignal(t *testing.T) {
 		cancel()
 	}()
 
-	_ = run(ctx, server, cfg, func() {
+	_ = run(ctx, servers{http: server}, cfg, func() {
 		called.Store(true)
 	})
 
@@ -107,7 +109,7 @@ func TestRun_OnShutdownCalledOnStartupError(t *testing.T) {
 
 	var called atomic.Bool
 
-	err = run(ctx, server, cfg, func() {
+	err = run(ctx, servers{http: server}, cfg, func() {
 		called.Store(true)
 	})
 
@@ -147,7 +149,7 @@ func TestRun_InFlightRequestCompletes(t *testing.T) {
 
 	runDone := make(chan error, 1)
 	go func() {
-		runDone <- run(ctx, server, cfg, func() {})
+		runDone <- run(ctx, servers{http: server}, cfg, func() {})
 	}()
 
 	// Ждем, пока сервер поднимется
@@ -181,5 +183,119 @@ func TestRun_InFlightRequestCompletes(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Error("run did not return after shutdown")
+	}
+}
+
+// TestRun_GRPCGracefulShutdownOnContextCancel проверяет, что при наличии gRPC-сервера
+// он поднимается вместе с HTTP-сервером и корректно останавливается по сигналу завершения,
+// симметрично поведению HTTP-сервера.
+func TestRun_GRPCGracefulShutdownOnContextCancel(t *testing.T) {
+	httpAddr := freePort(t)
+	grpcAddr := freePort(t)
+
+	server := &http.Server{
+		Addr:    httpAddr,
+		Handler: http.NewServeMux(),
+	}
+	cfg := testConfig(httpAddr)
+	grpcSrv := grpc.NewServer()
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	err := run(ctx, servers{http: server, grpc: grpcSrv, grpcAddr: grpcAddr}, cfg, func() {})
+	if err != nil {
+		t.Errorf("expected nil error on clean shutdown, got: %v", err)
+	}
+}
+
+// TestRun_GRPCStartupErrorStopsHTTPServer проверяет, что ошибка запуска gRPC-сервера
+// (например, занятый порт) приводит к остановке уже запущенного HTTP-сервера
+// и вызову onShutdown — симметрично тому, как ошибка запуска HTTP-сервера
+// останавливает весь run().
+func TestRun_GRPCStartupErrorStopsHTTPServer(t *testing.T) {
+	httpAddr := freePort(t)
+	grpcAddr := freePort(t)
+
+	// Занимаем порт gRPC-сервера, чтобы он не смог запуститься
+	blocker, err := net.Listen("tcp", grpcAddr)
+	if err != nil {
+		t.Fatalf("failed to bind blocker: %v", err)
+	}
+	defer blocker.Close()
+
+	server := &http.Server{
+		Addr:    httpAddr,
+		Handler: http.NewServeMux(),
+	}
+	cfg := testConfig(httpAddr)
+	grpcSrv := grpc.NewServer()
+
+	ctx := context.Background()
+
+	var called atomic.Bool
+
+	err = run(ctx, servers{http: server, grpc: grpcSrv, grpcAddr: grpcAddr}, cfg, func() {
+		called.Store(true)
+	})
+
+	if err == nil {
+		t.Error("expected error when gRPC port is already in use")
+	}
+	if !called.Load() {
+		t.Error("onShutdown was not called after gRPC startup error")
+	}
+}
+
+// TestRun_PprofServerStoppedOnShutdown проверяет, что pprof-сервер поднимается вместе
+// с основным HTTP-сервером и перестает отвечать после сигнала завершения — то есть
+// участвует в общем graceful shutdown lifecycle, симметрично основному серверу.
+func TestRun_PprofServerStoppedOnShutdown(t *testing.T) {
+	httpAddr := freePort(t)
+	pprofAddr := freePort(t)
+
+	server := &http.Server{
+		Addr:    httpAddr,
+		Handler: http.NewServeMux(),
+	}
+	pprofServer := &http.Server{
+		Addr:    pprofAddr,
+		Handler: http.NewServeMux(),
+	}
+	cfg := testConfig(httpAddr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- run(ctx, servers{http: server, pprof: pprofServer}, cfg, func() {})
+	}()
+
+	// Ждем, пока pprof-сервер поднимется, и убеждаемся, что порт слушается.
+	// Соединение сразу закрываем, иначе Shutdown будет ждать его завершения.
+	time.Sleep(50 * time.Millisecond)
+	conn, err := net.Dial("tcp", pprofAddr)
+	if err != nil {
+		t.Fatalf("expected pprof server to be listening, got: %v", err)
+	}
+	conn.Close()
+
+	cancel()
+
+	select {
+	case err := <-runDone:
+		if err != nil {
+			t.Errorf("expected nil error on graceful shutdown, got: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("run did not return after shutdown")
+	}
+
+	if _, err := net.Dial("tcp", pprofAddr); err == nil {
+		t.Error("expected pprof server to stop listening after shutdown")
 	}
 }

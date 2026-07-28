@@ -97,7 +97,9 @@ func TestLoadConfig_FileConfig_AllFields(t *testing.T) {
 		"audit_url": "http://audit.io/events",
 		"enable_https": false,
 		"tls_cert_file": "/tmp/cert.pem",
-		"tls_key_file": "/tmp/key.pem"
+		"tls_key_file": "/tmp/key.pem",
+		"trusted_subnet": "10.0.0.0/8",
+		"grpc_address": ":3200"
 	}`)
 	t.Setenv("CONFIG", path)
 
@@ -114,6 +116,8 @@ func TestLoadConfig_FileConfig_AllFields(t *testing.T) {
 	assert.False(t, cfg.EnableHTTPS)
 	assert.Equal(t, "/tmp/cert.pem", cfg.TLSCertFile)
 	assert.Equal(t, "/tmp/key.pem", cfg.TLSKeyFile)
+	assert.Equal(t, "10.0.0.0/8", cfg.TrustedSubnet)
+	assert.Equal(t, ":3200", cfg.GRPCAddress)
 }
 
 func TestLoadConfig_FileConfig_MissingFile_FatalExit(t *testing.T) {
@@ -203,6 +207,10 @@ func TestLoadConfig_Defaults_NoSources(t *testing.T) {
 	assert.Empty(t, cfg.AuditFile)
 	assert.Empty(t, cfg.AuditURL)
 	assert.False(t, cfg.EnableHTTPS)
+	// При пустом trusted_subnet доступ к /api/internal/stats должен быть запрещен
+	// для любого запроса — это гарантируется только если значение по умолчанию пусто.
+	assert.Empty(t, cfg.TrustedSubnet)
+	assert.Empty(t, cfg.GRPCAddress)
 }
 
 // --- Существующие тесты HTTPS (без изменений) ---
@@ -263,6 +271,85 @@ func TestLoadConfig_EnableHTTPS_EnvOverridesFlag(t *testing.T) {
 	cfg := LoadConfig()
 
 	assert.True(t, cfg.EnableHTTPS, "env must override flag default")
+}
+
+// --- Тесты TrustedSubnet (-t / --trusted-subnet / TRUSTED_SUBNET) ---
+
+func TestLoadConfig_TrustedSubnet_Env(t *testing.T) {
+	t.Setenv("TRUSTED_SUBNET", "192.168.0.0/16")
+
+	cfg := LoadConfig()
+
+	assert.Equal(t, "192.168.0.0/16", cfg.TrustedSubnet)
+}
+
+func TestLoadConfig_TrustedSubnet_Default_Empty(t *testing.T) {
+	// Без env/флага/файла TrustedSubnet должен оставаться пустым — иначе доступ
+	// к /api/internal/stats не будет запрещен по умолчанию, как требует задание.
+	cfg := LoadConfig()
+
+	assert.Empty(t, cfg.TrustedSubnet)
+}
+
+func TestLoadConfig_TrustedSubnet_ViaShortFlag(t *testing.T) {
+	// Флаг -t (короткая форма)
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{origArgs[0], "-t", "10.0.0.0/8"}
+
+	cfg := LoadConfig()
+
+	assert.Equal(t, "10.0.0.0/8", cfg.TrustedSubnet)
+}
+
+func TestLoadConfig_TrustedSubnet_ViaLongFlag(t *testing.T) {
+	// Флаг --trusted-subnet (длинная форма)
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{origArgs[0], "--trusted-subnet", "172.16.0.0/12"}
+
+	cfg := LoadConfig()
+
+	assert.Equal(t, "172.16.0.0/12", cfg.TrustedSubnet)
+}
+
+func TestLoadConfig_TrustedSubnet_EnvOverridesFlag(t *testing.T) {
+	t.Setenv("TRUSTED_SUBNET", "192.168.0.0/16")
+
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{origArgs[0], "-t", "10.0.0.0/8"}
+
+	cfg := LoadConfig()
+
+	assert.Equal(t, "192.168.0.0/16", cfg.TrustedSubnet, "env must override explicit flag")
+}
+
+// --- Тесты GRPCAddress (--grpc-addr / GRPC_ADDRESS) ---
+
+func TestLoadConfig_GRPCAddress_Env(t *testing.T) {
+	t.Setenv("GRPC_ADDRESS", ":3200")
+
+	cfg := LoadConfig()
+
+	assert.Equal(t, ":3200", cfg.GRPCAddress)
+}
+
+func TestLoadConfig_GRPCAddress_Default_Empty(t *testing.T) {
+	// Пустой GRPCAddress означает, что gRPC-сервер не запускается.
+	cfg := LoadConfig()
+
+	assert.Empty(t, cfg.GRPCAddress)
+}
+
+func TestLoadConfig_GRPCAddress_ViaFlag(t *testing.T) {
+	origArgs := os.Args
+	defer func() { os.Args = origArgs }()
+	os.Args = []string{origArgs[0], "--grpc-addr", ":3300"}
+
+	cfg := LoadConfig()
+
+	assert.Equal(t, ":3300", cfg.GRPCAddress)
 }
 
 func TestLoadConfig_EnvOverridesExplicitFlag(t *testing.T) {

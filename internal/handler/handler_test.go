@@ -688,6 +688,116 @@ func TestHandler_RedirectHandler_NoAuditOnNotFound(t *testing.T) {
 	assert.Empty(t, spy.Events())
 }
 
+// TestHandler_StatsHandler проверяет контроль доступа и корректность ответа эндпоинта /api/internal/stats.
+func TestHandler_StatsHandler(t *testing.T) {
+	const subnet = "192.168.1.0/24"
+
+	tests := []struct {
+		name       string
+		cidr       string
+		xRealIP    string
+		setHeader  bool
+		wantStatus int
+		wantURLs   *int
+		wantUsers  *int
+	}{
+		{
+			name:       "empty trusted subnet denies access",
+			cidr:       "",
+			xRealIP:    "192.168.1.5",
+			setHeader:  true,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "ip outside subnet",
+			cidr:       subnet,
+			xRealIP:    "10.0.0.1",
+			setHeader:  true,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "ip inside subnet returns 200",
+			cidr:       subnet,
+			xRealIP:    "192.168.1.5",
+			setHeader:  true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "invalid ip value",
+			cidr:       subnet,
+			xRealIP:    "not-an-ip",
+			setHeader:  true,
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "missing x-real-ip header",
+			cidr:       subnet,
+			setHeader:  false,
+			wantStatus: http.StatusForbidden,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storage := repository.NewMemStorage()
+			gen := generator.NewGenerator(8)
+			svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+			h := handler.NewHandler(svc,
+				options.WithAuthSecret(testSecret),
+				options.WithTrustedSubnet(tt.cidr),
+			)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+			if tt.setHeader {
+				req.Header.Set("X-Real-IP", tt.xRealIP)
+			}
+			w := httptest.NewRecorder()
+			h.StatsHandler(w, req)
+
+			require.Equal(t, tt.wantStatus, w.Code)
+			if tt.wantStatus == http.StatusOK {
+				var resp struct {
+					URLs  int `json:"urls"`
+					Users int `json:"users"`
+				}
+				require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+				assert.Equal(t, 0, resp.URLs)
+				assert.Equal(t, 0, resp.Users)
+			}
+		})
+	}
+}
+
+// TestHandler_StatsHandler_CountsCorrectly проверяет, что Stats возвращает актуальные счетчики.
+func TestHandler_StatsHandler_CountsCorrectly(t *testing.T) {
+	storage := repository.NewMemStorage()
+	gen := generator.NewGenerator(8)
+	svc := service.NewTrimmerService(storage, gen, "http://localhost:8080/")
+	h := handler.NewHandler(svc,
+		options.WithAuthSecret(testSecret),
+		options.WithTrustedSubnet("127.0.0.0/8"),
+	)
+
+	ctx := context.Background()
+	_ = storage.Create(ctx, &model.ShortURL{ShortURL: "abc", OriginalURL: "https://ya.ru", UserID: "u1"})
+	_ = storage.Create(ctx, &model.ShortURL{ShortURL: "def", OriginalURL: "https://google.com", UserID: "u2"})
+	_ = storage.Create(ctx, &model.ShortURL{ShortURL: "ghi", OriginalURL: "https://github.com", UserID: "u1"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	req.Header.Set("X-Real-IP", "127.0.0.1")
+	w := httptest.NewRecorder()
+	h.StatsHandler(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		URLs  int `json:"urls"`
+		Users int `json:"users"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal(t, 3, resp.URLs)
+	assert.Equal(t, 2, resp.Users)
+}
+
 func TestHandler_AuditEvent_ContainsUserID(t *testing.T) {
 	svc := service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
 	spy := &mockAuditor{}

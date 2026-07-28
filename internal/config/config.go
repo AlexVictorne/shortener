@@ -3,11 +3,12 @@
 // Приоритет: переменная окружения > флаг > файл конфигурации > значение по умолчанию.
 //
 // Флаги разбираются через github.com/spf13/pflag: однобуквенные мнемоники
-// (-a, -b, -f, -d, -s, -c) заданы как shorthand, путь к файлу конфигурации
-// дополнительно доступен в длинной форме --config, остальные флаги
-// (--audit-file, --audit-url, --auth-secret, --tls-cert, --tls-key) существуют
-// только в длинной форме через двойной дефис — это соответствует стандартной
-// GNU/POSIX-конвенции pflag/Cobra (один дефис — короткие флаги, два — длинные).
+// (-a, -b, -f, -d, -s, -c, -t) заданы как shorthand, путь к файлу конфигурации
+// и доверенная подсеть дополнительно доступны в длинной форме (--config,
+// --trusted-subnet), остальные флаги (--audit-file, --audit-url, --auth-secret,
+// --tls-cert, --tls-key, --grpc-addr) существуют только в длинной форме через
+// двойной дефис — это соответствует стандартной GNU/POSIX-конвенции
+// pflag/Cobra (один дефис — короткие флаги, два — длинные).
 package config
 
 import (
@@ -41,6 +42,12 @@ type Config struct {
 	TLSCertFile string
 	// TLSKeyFile — путь к PEM-файлу приватного ключа TLS; флаг --tls-key / env TLS_KEY_FILE.
 	TLSKeyFile string
+	// TrustedSubnet — строковое представление CIDR доверенной подсети для эндпоинта /api/internal/stats;
+	// флаг -t / env TRUSTED_SUBNET. Пустое значение запрещает любой доступ к эндпоинту.
+	TrustedSubnet string
+	// GRPCAddress — адрес gRPC-сервера (например, ":3200"); флаг --grpc-addr / env GRPC_ADDRESS.
+	// Пустое значение означает, что gRPC-сервер не запускается.
+	GRPCAddress string
 }
 
 // setting описывает один параметр конфигурации: канонический ключ (совпадает с
@@ -62,6 +69,8 @@ var settings = []setting{
 	{"enable_https", "enable_https", "ENABLE_HTTPS"},
 	{"tls_cert_file", "tls-cert", "TLS_CERT_FILE"},
 	{"tls_key_file", "tls-key", "TLS_KEY_FILE"},
+	{"trusted_subnet", "trusted-subnet", "TRUSTED_SUBNET"},
+	{"grpc_address", "grpc-addr", "GRPC_ADDRESS"},
 }
 
 const envNameConfig = "CONFIG"
@@ -86,6 +95,8 @@ func LoadConfig() *Config {
 	flagEnableHTTPS := flagSet.BoolP("enable_https", "s", false, "enable HTTPS mode")
 	flagTLSCert := flagSet.String("tls-cert", "", "path to TLS certificate PEM file")
 	flagTLSKey := flagSet.String("tls-key", "", "path to TLS private key PEM file")
+	flagTrustedSubnet := flagSet.StringP("trusted-subnet", "t", "", "trusted subnet CIDR for /api/internal/stats")
+	flagGRPCAddress := flagSet.String("grpc-addr", "", "gRPC server address (e.g. :3200); empty disables gRPC")
 
 	// Игнорируем нераспознанные флаги (например, флаги тестового раннера go test),
 	// вместо того чтобы завершать процесс с ошибкой.
@@ -138,6 +149,8 @@ func LoadConfig() *Config {
 	setIfExplicit(settings[6], flagAuditURL)
 	setIfExplicit(settings[8], flagTLSCert)
 	setIfExplicit(settings[9], flagTLSKey)
+	setIfExplicit(settings[10], flagTrustedSubnet)
+	setIfExplicit(settings[11], flagGRPCAddress)
 	if flagSet.Changed("enable_https") && os.Getenv("ENABLE_HTTPS") == "" {
 		v.Set("enable_https", *flagEnableHTTPS)
 	}
@@ -153,5 +166,7 @@ func LoadConfig() *Config {
 		EnableHTTPS:     v.GetBool("enable_https"),
 		TLSCertFile:     v.GetString("tls_cert_file"),
 		TLSKeyFile:      v.GetString("tls_key_file"),
+		TrustedSubnet:   v.GetString("trusted_subnet"),
+		GRPCAddress:     v.GetString("grpc_address"),
 	}
 }

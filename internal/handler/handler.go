@@ -9,6 +9,7 @@
 //	GET  /api/user/urls      — список URL текущего пользователя
 //	DELETE /api/user/urls    — мягкое удаление коротких ссылок
 //	GET  /ping               — проверка доступности хранилища
+//	GET  /api/internal/stats — статистика сервиса (только из доверенной подсети)
 package handler
 
 import (
@@ -16,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -37,6 +39,8 @@ type Handler struct {
 	pinger     options.Pinger
 	authSecret string
 	auditor    audit.Auditor
+	// trustedNet — разобранная CIDR доверенной подсети; nil означает запрет доступа к /api/internal/stats.
+	trustedNet *net.IPNet
 }
 
 // NewHandler создаёт Handler с переданным TrimmerService и функциональными опциями.
@@ -55,6 +59,14 @@ func NewHandler(service *service.TrimmerService, opts ...options.OptHandlerOptio
 	}
 	if optsStruct.Auditor != nil {
 		h.auditor = optsStruct.Auditor
+	}
+	if optsStruct.TrustedSubnet != "" {
+		_, ipNet, err := net.ParseCIDR(optsStruct.TrustedSubnet)
+		if err != nil {
+			log.Warn().Str("cidr", optsStruct.TrustedSubnet).Msg("invalid trusted subnet CIDR, stats endpoint will be disabled")
+		} else {
+			h.trustedNet = ipNet
+		}
 	}
 	return h
 }
@@ -270,6 +282,46 @@ func (h *Handler) DeleteUserURLsHandler(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// statsResponse — тело ответа эндпоинта GET /api/internal/stats.
+type statsResponse struct {
+	// URLs — общее количество сокращенных URL в сервисе.
+	URLs int `json:"urls"`
+	// Users — общее количество пользователей в сервисе.
+	Users int `json:"users"`
+}
+
+// StatsHandler обрабатывает GET /api/internal/stats.
+// Возвращает JSON-объект с количеством URL и пользователей.
+// Доступ разрешен только клиентам, чей IP (из заголовка X-Real-IP) входит в доверенную подсеть.
+// При пустом trusted_subnet или несоответствии IP возвращает 403 Forbidden.
+func (h *Handler) StatsHandler(w http.ResponseWriter, r *http.Request) {
+	// Если доверенная подсеть не задана — запрещаем любой доступ
+	if h.trustedNet == nil {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+
+	rawIP := r.Header.Get("X-Real-IP")
+	ip := net.ParseIP(rawIP)
+	if ip == nil || !h.trustedNet.Contains(ip) {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+
+	urls, users, err := h.service.Stats(r.Context())
+	if err != nil {
+		log.Error().Err(err).Msg("stats: storage error")
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(statsResponse{URLs: urls, Users: users}); err != nil {
+		log.Error().Err(err).Msg("stats: encode error")
+	}
+}
+
 // SetupRoutes регистрирует все маршруты и middleware в переданном Chi-роутере.
 // Порядок middleware: RequestResponseLogger → GzipMiddleware → AuthMiddleware.
 func (h *Handler) SetupRoutes(mux chi.Router) {
@@ -278,6 +330,7 @@ func (h *Handler) SetupRoutes(mux chi.Router) {
 	mux.Use(middleware.AuthMiddleware(h.authSecret))
 
 	mux.Get("/ping", h.PingHandler)
+	mux.Get("/api/internal/stats", h.StatsHandler)
 	mux.Post("/", h.ShortenURLHandler)
 	mux.Post("/api/shorten", h.ShortenURLJSONHandler)
 	mux.Post("/api/shorten/batch", h.BatchShortenHandler)

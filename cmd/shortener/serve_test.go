@@ -21,7 +21,18 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"shortener/internal/config"
+	"shortener/internal/repository"
+	"shortener/internal/service"
+	"shortener/pkg/audit"
+	"shortener/pkg/generator"
 )
+
+// newTestTrimmerService создает минимальный TrimmerService на MemStorage для тестов
+// конструирования gRPC-сервера — сама бизнес-логика сервиса здесь не важна.
+func newTestTrimmerService(t *testing.T) *service.TrimmerService {
+	t.Helper()
+	return service.NewTrimmerService(repository.NewMemStorage(), generator.NewGenerator(8), "http://localhost:8080/")
+}
 
 // generateSelfSignedCert создает временные PEM-файлы самоподписанного сертификата
 // и возвращает пути к ним. Файлы удаляются автоматически по завершении теста.
@@ -166,4 +177,48 @@ func TestListenAndServe_HTTPS_BadCert(t *testing.T) {
 	// Должна вернуть ошибку немедленно (файлы не существуют)
 	err := listenAndServe(srv, cfg)
 	assert.Error(t, err)
+}
+
+// TestNewGRPCServer_PlaintextWhenHTTPSDisabled проверяет, что при EnableHTTPS == false
+// gRPC-сервер конструируется без ошибок и без TLS-креденшелов.
+func TestNewGRPCServer_PlaintextWhenHTTPSDisabled(t *testing.T) {
+	cfg := &config.Config{EnableHTTPS: false}
+	svc := newTestTrimmerService(t)
+
+	srv, err := newGRPCServer(cfg, svc, audit.NoopAuditor{})
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+}
+
+// TestNewGRPCServer_UsesTLSWhenHTTPSEnabled проверяет, что при EnableHTTPS == true
+// и валидных сертификатах gRPC-сервер конструируется без ошибок, используя
+// те же сертификат/ключ, что и основной HTTP-сервер.
+func TestNewGRPCServer_UsesTLSWhenHTTPSEnabled(t *testing.T) {
+	certFile, keyFile := generateSelfSignedCert(t)
+	cfg := &config.Config{
+		EnableHTTPS: true,
+		TLSCertFile: certFile,
+		TLSKeyFile:  keyFile,
+	}
+	svc := newTestTrimmerService(t)
+
+	srv, err := newGRPCServer(cfg, svc, audit.NoopAuditor{})
+	require.NoError(t, err)
+	require.NotNil(t, srv)
+}
+
+// TestNewGRPCServer_BadCert проверяет, что при EnableHTTPS == true и несуществующих
+// файлах сертификата/ключа newGRPCServer возвращает ошибку немедленно, симметрично
+// TestListenAndServe_HTTPS_BadCert для основного HTTP-сервера.
+func TestNewGRPCServer_BadCert(t *testing.T) {
+	cfg := &config.Config{
+		EnableHTTPS: true,
+		TLSCertFile: "/nonexistent/cert.pem",
+		TLSKeyFile:  "/nonexistent/key.pem",
+	}
+	svc := newTestTrimmerService(t)
+
+	srv, err := newGRPCServer(cfg, svc, audit.NoopAuditor{})
+	assert.Error(t, err)
+	assert.Nil(t, srv)
 }
